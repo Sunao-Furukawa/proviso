@@ -1,0 +1,16 @@
+# factorial -- recursion + IO, all plain Ints (prototype-grade, runs as-is).
+# Shows that you can write ordinary code with zero proof obligations.
+
+fn fact(n: Int) -> Int {
+  if n <= 1 {
+    1
+  } else {
+    n * fact(n - 1)
+  }
+}
+
+fn main() -> Int ! {IO} {
+  print(fact(5));    # 120
+  print(fact(10));   # 3628800
+  fact(6)            # returns 720
+}

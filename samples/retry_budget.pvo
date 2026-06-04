@@ -1,0 +1,20 @@
+# retry_budget -- the Net effect carries a dependent retry budget (r <= 3).
+# Every call here stays within the cap, so it type-checks. Try changing any
+# argument to 4 or more and `proviso check` will flag it with a counterexample,
+# exactly like a refinement violation -- because that is what it is.
+
+fn fetch_user() -> Int ! {Net} {
+  http_get(2)
+}
+
+fn fetch_config() -> Int ! {Net} {
+  http_get(0)
+}
+
+fn main() -> Int ! {Net, IO} {
+  let u = fetch_user();
+  print(u);            # 200
+  let c = fetch_config();
+  print(c);            # 200
+  u
+}

@@ -1,0 +1,18 @@
+# ── Axis 1, prototype stage ──────────────────────────────────────────────
+# Everything is a plain `Int`. No proofs are demanded; the program just runs.
+# This is the "Python-like" end of the gradual spectrum.
+
+fn inc(x: Int) -> Int {
+  x + 1
+}
+
+fn add(a: Int, b: Int) -> Int {
+  a + b
+}
+
+fn main() -> Int ! {IO} {
+  let x = inc(41);
+  print(x);
+  print(add(10, 20));
+  x
+}

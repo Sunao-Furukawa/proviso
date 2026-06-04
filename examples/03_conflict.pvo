@@ -1,0 +1,22 @@
+# ── The showcase: a refinement conflict as a dialogue ────────────────────
+# `sqrt_floor` was refined to demand a *strictly positive* input.
+# `report` only promises its `count` is *non-negative*.
+# The two constraints disagree at exactly one value: 0.
+#
+# `proviso check` will not say "type error". It will name both constraints, hand
+# you the counterexample, and offer to either LOOSEN the requirement or
+# STRENGTHEN the source — your call.
+
+fn sqrt_floor(x: Int{n | n > 0}) -> Int{r | r >= 0} {
+  abs(x)
+}
+
+fn report(count: Int{c | c >= 0}) -> Int ! {IO} {
+  let s = sqrt_floor(count);
+  print(s);
+  s
+}
+
+fn main() -> Int ! {IO} {
+  report(0)
+}

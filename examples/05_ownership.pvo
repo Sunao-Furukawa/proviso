@@ -1,0 +1,15 @@
+# ── Axis 3: ownership as an effect, with an explainable rejection ────────
+# `conn` is a linear resource. Passing it to `send` performs a Move effect
+# that consumes it. The second `send(conn)` then touches a value that no
+# longer exists. Proviso shows the *path* (move site -> reuse site) and offers
+# the two standard ways out: borrow, or clone.
+
+fn send(c: Int) -> Int ! {Net} {
+  http_get(1)
+}
+
+fn main() -> Int ! {Net} {
+  let linear conn = http_get(0);
+  send(conn);
+  send(conn)
+}

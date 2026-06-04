@@ -1,0 +1,18 @@
+# resource -- ownership done right (the patterns the move-error suggests).
+# `db` is a linear resource. We `borrow` it for a read and `clone` it to get a
+# second independent owner, then move the original into `query` exactly once.
+# No use-after-move, so the ownership checker stays quiet.
+
+fn query(c: Int) -> Int ! {Net} {
+  http_get(1)
+}
+
+fn main() -> Int ! {Net, IO} {
+  let linear db = http_get(0);
+  let snapshot = clone(db);     # independent copy -- does not consume db
+  print(borrow(db));            # read without consuming
+  let r = query(db);            # this MOVES db (consumes it)
+  print(r);
+  print(snapshot);              # snapshot is still ours
+  snapshot                      # ... and we can return it
+}

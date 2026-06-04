@@ -1,0 +1,20 @@
+# ── Axis 1, production stage ─────────────────────────────────────────────
+# Now we start paying for correctness. `safe_div` demands a nonzero divisor;
+# `magnitude` is *proven* to return a non-negative Int (the refinement on `abs`
+# flows through). Every obligation here is discharged statically.
+
+fn safe_div(a: Int, b: Int{n | n != 0}) -> Int {
+  a / b
+}
+
+fn magnitude(x: Int) -> Int{m | m >= 0} {
+  abs(x)
+}
+
+fn main() -> Int ! {IO} {
+  let d = safe_div(20, 4);
+  print(d);
+  let m = magnitude(-7);
+  print(m);
+  d
+}

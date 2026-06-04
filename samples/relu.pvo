@@ -1,0 +1,18 @@
+# relu -- a function *proven* to return a non-negative Int.
+# The annotation `-> Int{r | r >= 0}` is a real obligation. The `if x > 0` guard
+# refines x in the then-branch; the else-branch is the literal 0; their join
+# (x>0) || (x==0) implies r>=0, so the checker discharges it statically.
+
+fn relu(x: Int) -> Int{r | r >= 0} {
+  if x > 0 {
+    x
+  } else {
+    0
+  }
+}
+
+fn main() -> Int ! {IO} {
+  print(relu(5));    # 5
+  print(relu(-3));   # 0
+  relu(0)            # returns 0
+}

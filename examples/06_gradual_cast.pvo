@@ -1,0 +1,21 @@
+# ── Axis 1, the gradual seam ─────────────────────────────────────────────
+# `raw` is an unrefined Int (we haven't paid for any proof about it). Passing it
+# into `need_positive`, which demands {n | n > 0}, is NOT a static error: Proviso
+# emits a `gradual[cast]` note and inserts a runtime check. You can pay later.
+#
+# Run it with 7 and the check passes silently. Change `from_input(7)` to
+# `from_input(0)` and the runtime check fires -- the deferred bill comes due.
+
+fn need_positive(x: Int{n | n > 0}) -> Int {
+  x
+}
+
+fn from_input(raw: Int) -> Int ! {IO} {
+  let checked = need_positive(raw);
+  print(checked);
+  checked
+}
+
+fn main() -> Int ! {IO} {
+  from_input(7)
+}

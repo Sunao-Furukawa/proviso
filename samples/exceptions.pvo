@@ -1,0 +1,19 @@
+# exceptions -- the Exc effect, raised with `throw` and discharged with
+# `handle ... catch`. Note `checked_div`'s type advertises `! {Exc}`, and once
+# `main` handles it, the effect no longer appears in main's type.
+
+fn checked_div(a: Int, b: Int) -> Int ! {Exc} {
+  if b == 0 {
+    throw(1)
+  } else {
+    a / b
+  }
+}
+
+fn main() -> Int ! {IO} {
+  let ok = handle { checked_div(20, 4) } catch (e) { -1 };
+  print(ok);                                       # 5
+  let bad = handle { checked_div(7, 0) } catch (e) { -1 };
+  print(bad);                                      # -1  (the throw was caught)
+  ok
+}

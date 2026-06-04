@@ -1,0 +1,450 @@
+"""The gradual dependent type + effect checker.
+
+This is where the three axes meet:
+
+  1. Gradual dependent types: a plain `Int` carries an UNKNOWN refinement (`?`) and is
+     *consistent* with any requirement -- it just defers to a runtime check (a warning,
+     not an error).  Add `Int{n | n > 0}` and the same call site is now statically
+     proven or statically rejected.  You pay for correctness when you choose to.
+
+  2. Effects in the signature: every expression's inferred effect row must be a subset
+     of what the function declares.  A `Net{r | r <= 3}` effect's "max 3 retries"
+     property is enforced by the *same* refinement engine, on the operation's argument --
+     that is the promised integration of effects with dependent types.
+
+  3. (Ownership lives in ownership.py -- it is the third effect-like discipline.)
+
+Every rejection is emitted as a `Diagnostic` carrying a counterexample and two framed
+choices, never a bare "type error".
+"""
+from __future__ import annotations
+
+from typing import Dict, List, Optional, Tuple
+
+from . import nodes as N
+from . import predicate as P
+from . import types as T
+from .diagnostics import Diagnostic, Choice, Warning
+from .types import BaseType, FnType, Effect, Refinement
+
+
+Env = Dict[str, T.Type]
+
+
+def builtin_signatures() -> Dict[str, FnType]:
+    """The standard prelude -- each builtin shows off one part of the design."""
+    return {
+        # IO
+        "print": FnType([("x", T.INT(), False)], T.UNIT, [Effect("IO")]),
+        # Exceptions
+        "throw": FnType([("code", T.INT(), False)], T.UNIT, [Effect("Exc")]),
+        # Pure refinement inference: abs is *proven* to return a non-negative Int.
+        "abs": FnType([("x", T.INT(), False)],
+                      T.INT(P.PCmp(">=", 0)), []),
+        # A network operation whose safety property -- "at most 3 retries" -- is a
+        # dependent refinement on its argument, while `Net` rides in the effect row.
+        "http_get": FnType(
+            [("retries", T.INT(P.PAnd(P.PCmp(">=", 0), P.PCmp("<=", 3)), "r"), False)],
+            T.INT(P.PCmp(">=", 0)),
+            [Effect("Net", Refinement("r", P.PAnd(P.PCmp(">=", 0), P.PCmp("<=", 3))))],
+        ),
+        # Ownership primitives: read a linear value without consuming it. The
+        # ownership pass treats these specially; to the type checker they are just
+        # pure identity functions over a value.
+        "borrow": FnType([("x", T.INT(), False)], T.INT(), []),
+        "clone": FnType([("x", T.INT(), False)], T.INT(), []),
+    }
+
+
+class Checker:
+    def __init__(self, module: N.Module, source: str):
+        self.module = module
+        self.src_lines = source.splitlines()
+        self.diags: List[Diagnostic] = []
+        self.warnings: List[Warning] = []
+        self.fns: Dict[str, FnType] = {}
+        self.fn_decls: Dict[str, N.FnDecl] = {}
+        self.builtins = builtin_signatures()
+
+    # --- public ----------------------------------------------------------- #
+    def run(self) -> Tuple[List[Diagnostic], List[Warning]]:
+        for d in self.module.decls:
+            self.fns[d.name] = self._fn_type(d)
+            self.fn_decls[d.name] = d
+        for d in self.module.decls:
+            self._check_fn(d)
+        return self.diags, self.warnings
+
+    def lookup(self, name: str) -> Optional[FnType]:
+        return self.fns.get(name) or self.builtins.get(name)
+
+    def src_line(self, line: int) -> Optional[str]:
+        if 1 <= line <= len(self.src_lines):
+            return self.src_lines[line - 1]
+        return None
+
+    # --- type-expression -> semantic type --------------------------------- #
+    def _sem_type(self, te: Optional[N.TypeExpr]) -> T.Type:
+        if te is None:
+            return T.UNIT
+        if te.name == "Bool":
+            return T.BOOL
+        if te.name == "Unit":
+            return T.UNIT
+        if te.name == "Int":
+            if te.refine is None:
+                return T.INT()  # gradual
+            return T.INT(te.refine.pred, te.refine.var)
+        # Unknown base type name; treat as opaque gradual Int-ish for v1.
+        return BaseType(te.name, Refinement.gradual())
+
+    def _fn_type(self, d: N.FnDecl) -> FnType:
+        params = [(p.name, self._sem_type(p.type), p.linear) for p in d.params]
+        ret = self._sem_type(d.ret)
+        effects = [Effect(e.name,
+                          Refinement(e.refine.var, e.refine.pred) if e.refine else None)
+                   for e in d.effects]
+        return FnType(params, ret, effects)
+
+    # --- function check --------------------------------------------------- #
+    def _check_fn(self, d: N.FnDecl) -> None:
+        sig = self.fns[d.name]
+        env: Env = {name: ty for (name, ty, _) in sig.params}
+        body_ty, body_effects = self._infer(d.body, env)
+
+        # return-type obligation
+        self._check_assign(body_ty, sig.ret, d.body.line,
+                           context=f"return value of `{d.name}`")
+
+        # effect obligation: inferred subset-of declared
+        declared = {e.name for e in sig.effects}
+        for eff_name, line in body_effects.items():
+            if eff_name not in declared:
+                self._effect_leak(d, eff_name, line)
+
+    # --- inference -------------------------------------------------------- #
+    def _infer(self, e: N.Expr, env: Env) -> Tuple[T.Type, Dict[str, int]]:
+        if isinstance(e, N.IntLit):
+            return T.INT(P.PCmp("==", e.value)), {}
+        if isinstance(e, N.BoolLit):
+            return T.BOOL, {}
+        if isinstance(e, N.Var):
+            ty = env.get(e.name)
+            if ty is None:
+                # Unknown variable -- surface gently, keep going.
+                self.diags.append(Diagnostic(
+                    code="unbound", title=f"unknown name `{e.name}`",
+                    line=e.line, expected="a value in scope", found="nothing",
+                    why=f"`{e.name}` is not a parameter or let-binding here.",
+                    source_line=self.src_line(e.line),
+                ))
+                return T.INT(), {}
+            return ty, {}
+        if isinstance(e, N.UnOp):
+            ty, eff = self._infer(e.operand, env)
+            if e.op == "!":
+                return T.BOOL, eff
+            return T.INT(), eff  # negation: drop to gradual (sound)
+        if isinstance(e, N.BinOp):
+            return self._infer_binop(e, env)
+        if isinstance(e, N.Call):
+            return self._infer_call(e, env)
+        if isinstance(e, N.If):
+            return self._infer_if(e, env)
+        if isinstance(e, N.Handle):
+            return self._infer_handle(e, env)
+        if isinstance(e, N.Block):
+            return self._infer_block(e, env)
+        raise TypeError(f"cannot infer {e!r}")
+
+    def _infer_binop(self, e: N.BinOp, env: Env) -> Tuple[T.Type, Dict[str, int]]:
+        lt, le = self._infer(e.left, env)
+        rt, re = self._infer(e.right, env)
+        eff = {**le, **re}
+        if e.op in ("&&", "||"):
+            return T.BOOL, eff
+        if e.op in ("<", "<=", ">", ">=", "==", "!="):
+            return T.BOOL, eff
+        # arithmetic -- propagate intervals so refinements survive computation
+        if e.op in ("+", "-", "*"):
+            ai = self._interval(lt)
+            bi = self._interval(rt)
+            if ai is not None and bi is not None:
+                if e.op == "+":
+                    res = P.interval_add(ai, bi)
+                elif e.op == "-":
+                    res = P.interval_sub(ai, bi)
+                else:
+                    res = P.interval_mul(ai, bi)
+                pred = P.pred_of_interval(res)
+                if isinstance(pred, P.PTrue):
+                    return T.INT(), eff
+                return T.INT(pred), eff
+        return T.INT(), eff  # / and % stay gradual
+
+    def _interval(self, ty: T.Type) -> Optional[P.Interval]:
+        if isinstance(ty, BaseType) and ty.name == "Int":
+            if ty.refine.unknown:
+                return P.Interval(P.NEG_INF, P.POS_INF)
+            return P.interval_of(ty.refine.pred)
+        return None
+
+    def _infer_call(self, e: N.Call, env: Env) -> Tuple[T.Type, Dict[str, int]]:
+        sig = self.lookup(e.fn)
+        eff: Dict[str, int] = {}
+        if sig is None:
+            self.diags.append(Diagnostic(
+                code="unbound", title=f"unknown function `{e.fn}`",
+                line=e.line, expected="a declared or builtin function",
+                found=f"`{e.fn}`", why="no such function is in scope.",
+                source_line=self.src_line(e.line),
+            ))
+            return T.INT(), eff
+
+        # arity
+        if len(e.args) != len(sig.params):
+            self.diags.append(Diagnostic(
+                code="arity", title=f"`{e.fn}` expects {len(sig.params)} argument(s)",
+                line=e.line, expected=f"{len(sig.params)} argument(s)",
+                found=f"{len(e.args)} given",
+                why="argument count does not match the signature.",
+                source_line=self.src_line(e.line),
+            ))
+
+        for arg, (pname, pty, _lin) in zip(e.args, sig.params):
+            at, ae = self._infer(arg, env)
+            eff.update(ae)
+            # `print` is intentionally polymorphic over base types in v1.
+            if e.fn == "print":
+                continue
+            self._check_arg(at, pty, arg, e.fn, pname)
+
+        for ef in sig.effects:
+            eff[ef.name] = e.line
+        return sig.ret, eff
+
+    def _infer_if(self, e: N.If, env: Env) -> Tuple[T.Type, Dict[str, int]]:
+        ct, ce = self._infer(e.cond, env)
+        then_env = self._refine_env(e.cond, env, negate=False)
+        tt, te = self._infer(e.then, then_env)
+        eff = {**ce, **te}
+        if e.els is None:
+            return T.UNIT, eff
+        else_env = self._refine_env(e.cond, env, negate=True)
+        et, ee = self._infer(e.els, else_env)
+        eff.update(ee)
+        return self._join(tt, et), eff
+
+    def _infer_handle(self, e: N.Handle, env: Env) -> Tuple[T.Type, Dict[str, int]]:
+        bt, be = self._infer(e.body, env)
+        # the binder receives the thrown code (an Int)
+        henv = dict(env)
+        henv[e.binder] = T.INT()
+        ht, he = self._infer(e.handler, henv)
+        # `handle ... catch` discharges the Exc effect of the body
+        be = {k: v for k, v in be.items() if k != "Exc"}
+        eff = {**be, **he}
+        return self._join(bt, ht), eff
+
+    def _infer_block(self, e: N.Block, env: Env) -> Tuple[T.Type, Dict[str, int]]:
+        local = dict(env)
+        eff: Dict[str, int] = {}
+        for st in e.stmts:
+            if isinstance(st, N.LetStmt):
+                vt, ve = self._infer(st.value, local)
+                eff.update(ve)
+                if st.type is not None:
+                    declared = self._sem_type(st.type)
+                    self._check_assign(vt, declared, st.line,
+                                       context=f"binding `{st.name}`")
+                    local[st.name] = declared
+                else:
+                    local[st.name] = vt
+            elif isinstance(st, N.ExprStmt):
+                _, se = self._infer(st.expr, local)
+                eff.update(se)
+        if e.result is not None:
+            rt, re = self._infer(e.result, local)
+            eff.update(re)
+            return rt, eff
+        return T.UNIT, eff
+
+    # --- subtyping / consistency, the gradual core ------------------------ #
+    def _check_assign(self, src: T.Type, dst: T.Type, line: int, context: str) -> None:
+        # base-name mismatch is a hard, non-gradual error
+        if isinstance(src, BaseType) and isinstance(dst, BaseType):
+            if src.name != dst.name:
+                self.diags.append(Diagnostic(
+                    code="type", title=f"{context}: expected {dst.name}, found {src.name}",
+                    line=line, expected=str(dst), found=str(src),
+                    why="base types differ; no refinement can reconcile them.",
+                    source_line=self.src_line(line),
+                ))
+                return
+            self._check_refine(src, dst, line, context, param_name=None, arg=None)
+
+    def _check_arg(self, arg_ty: T.Type, param_ty: T.Type, arg: N.Expr,
+                   fn: str, pname: str) -> None:
+        if isinstance(arg_ty, BaseType) and isinstance(param_ty, BaseType):
+            if arg_ty.name != param_ty.name:
+                self.diags.append(Diagnostic(
+                    code="type",
+                    title=f"argument `{pname}` of `{fn}`: expected {param_ty.name}, "
+                          f"found {arg_ty.name}",
+                    line=arg.line, expected=str(param_ty), found=str(arg_ty),
+                    why="base types differ.",
+                    source_line=self.src_line(arg.line),
+                ))
+                return
+            self._check_refine(arg_ty, param_ty, arg.line,
+                               context=f"argument `{pname}` of `{fn}`",
+                               param_name=pname, arg=arg)
+
+    def _check_refine(self, src: BaseType, dst: BaseType, line: int, context: str,
+                      param_name: Optional[str], arg: Optional[N.Expr]) -> None:
+        if dst.refine.unknown:
+            return  # requirement is `?` -- accepts anything
+        if src.refine.unknown:
+            # gradual point: known requirement, unknown source -> runtime check
+            self.warnings.append(Warning(
+                code="cast", line=line,
+                message=(f"{context} needs {dst}, but the value is an unrefined "
+                         f"Int -- inserting a runtime check (pay later, or annotate to "
+                         f"prove it now)."),
+            ))
+            return
+        # both sides fully refined -> decide it
+        cx = P.implies(src.refine.pred, dst.refine.pred)
+        if cx is None:
+            return  # proven
+        self.diags.append(self._refine_conflict(src, dst, line, context, cx,
+                                                param_name, arg))
+
+    def _refine_conflict(self, src: BaseType, dst: BaseType, line: int, context: str,
+                         cx: int, param_name: Optional[str],
+                         arg: Optional[N.Expr]) -> Diagnostic:
+        req_pred = P.render(dst.refine.pred, dst.refine.var)
+        known_pred = P.render(src.refine.pred, src.refine.var)
+        src_text = self.src_line(line)
+
+        # The two framed choices.
+        choices: List[Choice] = []
+        target = f"`{param_name}`" if param_name else "the target"
+        # (A) LOOSEN the requirement to admit what is actually known.
+        loosened = P.render(src.refine.pred, dst.refine.var)
+        choices.append(Choice(
+            label="LOOSEN the requirement",
+            explanation=(f"Accept what the source already guarantees. {target} would "
+                         f"then admit values like {cx}; downstream code must be ready "
+                         f"for them."),
+            edit=f"Int{{{dst.refine.var} | {loosened}}}   "
+                 f"(or drop the refinement entirely to go gradual)",
+        ))
+        # (B) STRENGTHEN the source so the requirement is met before this point.
+        guard_var = src.refine.var
+        choices.append(Choice(
+            label="STRENGTHEN the source",
+            explanation=(f"Guarantee {req_pred} before reaching here, e.g. guard the "
+                         f"value or refine its producer. The counterexample {cx} is "
+                         f"then excluded by construction."),
+            edit=f"if {P.render(dst.refine.pred, guard_var)} {{ ... }}   "
+                 f"-- inside the guard the value is proven {dst}",
+        ))
+
+        return Diagnostic(
+            code="refine-conflict",
+            title=f"{context} cannot be proven",
+            line=line,
+            expected=str(dst),
+            found=str(src),
+            why=(f"the source guarantees only ({known_pred}); the target requires "
+                 f"({req_pred}). These do not agree on every value."),
+            counterexample=(f"a value of {cx} satisfies the source but breaks the "
+                            f"requirement ({req_pred} is false at {cx})"),
+            choices=choices,
+            source_line=src_text,
+            note="this is a fully-refined (paid-for) obligation, so it is a hard error, "
+                 "not a deferred runtime check.",
+        )
+
+    def _effect_leak(self, d: N.FnDecl, eff_name: str, line: int) -> None:
+        declared = T.effects_str([Effect(e.name) for e in self.fns[d.name].effects])
+        with_eff = sorted({e.name for e in self.fns[d.name].effects} | {eff_name})
+        choices = [
+            Choice(
+                label="DECLARE the effect (make the cost visible)",
+                explanation=(f"`{d.name}` really does perform `{eff_name}`. Surfacing it "
+                             f"in the signature is honest and lets callers account for "
+                             f"it."),
+                edit=f"fn {d.name}(...) ! {{{', '.join(with_eff)}}} {{ ... }}",
+            ),
+            Choice(
+                label="HANDLE or REMOVE the effect (keep the type pure)",
+                explanation=(f"Discharge `{eff_name}` locally (e.g. `handle ... catch` "
+                             f"for Exc) or drop the operation, so it never escapes "
+                             f"`{d.name}`'s type."),
+                edit=f"handle {{ ... }} catch (e) {{ ... }}   "
+                     f"-- or remove the `{eff_name}` operation",
+            ),
+        ]
+        self.diags.append(Diagnostic(
+            code="effect-leak",
+            title=f"`{d.name}` performs `{eff_name}` but its type hides it",
+            line=line,
+            expected=f"declared effects {declared}",
+            found=f"`{eff_name}` performed in the body",
+            why=(f"an effect is a property of the type. `{eff_name}` happens at runtime "
+                 f"but the signature claims {declared}, so callers cannot see or "
+                 f"control it."),
+            choices=choices,
+            source_line=self.src_line(line),
+        ))
+
+    # --- helpers ---------------------------------------------------------- #
+    def _join(self, a: T.Type, b: T.Type) -> T.Type:
+        if isinstance(a, BaseType) and isinstance(b, BaseType) and a.name == b.name:
+            if a.name == "Int":
+                if a.refine.unknown or b.refine.unknown:
+                    return T.INT()
+                # the join is the union of guarantees (Or)
+                return T.INT(P.POr(a.refine.pred, b.refine.pred), a.refine.var)
+            return a
+        return T.INT()  # disjoint -> gradual
+
+    def _refine_env(self, cond: N.Expr, env: Env, negate: bool) -> Env:
+        """Occurrence typing: a guard like `if x > 0` refines x inside the branch."""
+        out = dict(env)
+        self._apply_guard(cond, out, negate)
+        return out
+
+    def _apply_guard(self, cond: N.Expr, env: Env, negate: bool) -> None:
+        if isinstance(cond, N.BinOp) and cond.op == "&&" and not negate:
+            self._apply_guard(cond.left, env, negate)
+            self._apply_guard(cond.right, env, negate)
+            return
+        if isinstance(cond, N.BinOp) and cond.op in ("<", "<=", ">", ">=", "==", "!="):
+            var = name = None
+            const = None
+            op = cond.op
+            if isinstance(cond.left, N.Var) and isinstance(cond.right, N.IntLit):
+                name, const = cond.left.name, cond.right.value
+            elif isinstance(cond.left, N.IntLit) and isinstance(cond.right, N.Var):
+                name, const = cond.right.name, cond.left.value
+                op = {"<": ">", "<=": ">=", ">": "<", ">=": "<=",
+                      "==": "==", "!=": "!="}[op]
+            if name is None:
+                return
+            if negate:
+                op = {"<": ">=", "<=": ">", ">": "<=", ">=": "<",
+                      "==": "!=", "!=": "=="}[op]
+            cur = env.get(name)
+            if not isinstance(cur, BaseType) or cur.name != "Int":
+                return
+            new = P.PCmp(op, const)
+            pred = new if cur.refine.unknown else P.PAnd(cur.refine.pred, new)
+            var = cur.refine.var if not cur.refine.unknown else name
+            env[name] = T.INT(pred, var)
+
+
+def check(module: N.Module, source: str) -> Tuple[List[Diagnostic], List[Warning]]:
+    return Checker(module, source).run()

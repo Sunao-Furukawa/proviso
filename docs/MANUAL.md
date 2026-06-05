@@ -107,6 +107,7 @@ fn main() -> Int ! {IO} {
 | `Unit` | 値なし。ブロックが末尾式を持たないときの値。表示は `()` | － |
 | `Array` | 整数の配列（v0.1 は要素 Int 固定）。リテラル `[1, 2, 3]`、長さ `len(a)`、添字 `a[i]` | － |
 | `Fn` | 第一級関数値（ラムダや捕捉した継続）。v0.1 では引数/効果を細分しない gradual な関数型 | － |
+| `Str` | 文字列。リテラル `"..."`（`\n \t \" \\`）、連結 `+`、比較 `==`/`!=`、`to_str(n)` | － |
 
 - **`Int`**（精緻化なし）は内部的に「未知の述語 `?`」を持つ**漸進的（gradual）**な型です。あらゆる要求と
   両立し、必要なら実行時チェックに先送りされます（§12）。
@@ -154,7 +155,11 @@ fn area(s: Shape) -> Int {
 
 - **網羅性**: チェッカは全ヴァリアントが網羅されているか検査します。漏れがあれば `non-exhaustive`
   診断（不足アーム or ワイルドカード `_` の2択）を出します。
-- パターンは1段（`Ctor(変数...)` か `_`）。ネストパターン・`.field` 直接アクセスは未対応（分解は match で）。
+- パターンは**ネスト可能**: `Cons(a, Cons(b, rest))` のように入れ子にできます。使えるのは——コンストラクタ
+  パターン `Ctor(部分パターン...)`、変数束縛（**小文字始まり**の識別子）、ワイルドカード `_`、リテラル
+  パターン（`0` / `true` / `"x"`）。**大文字始まりはコンストラクタ**、小文字は束縛、という規約です。
+- 網羅性チェックは**トップレベルのコンストラクタ**についてのみ行います（ネストの完全性や、リテラルパターンの
+  網羅は未検査）。`.field` 直接アクセスはなく、分解は match で行います。
 
 精緻化型の構文は `BaseType { 束縛変数 | 述語 }` です。述語は**束縛変数と整数定数だけ**から成る、
 線形整数算術の決定可能な断片です。
@@ -459,6 +464,7 @@ fn from_input(raw: Int) -> Int ! {IO} {   # raw は ? （未払い）
 | `borrow(x)` | `Int -> Int` | なし | 所有権を消費せず読む（§11） |
 | `clone(x)` | `Int -> Int` | なし | 独立コピーを得る（§11） |
 | `len(a)` | `Array -> Int{v | v >= 0}` | なし | 配列長。依存精緻化の measure（`len(a)`）として参照可（§6） |
+| `to_str(n)` | `Int -> Str` | なし | 整数を文字列に変換（メッセージ組み立て用） |
 
 > `print` は v0.1 では基本型に対して多相的に振る舞います（型チェッカが特別扱い）。
 
@@ -533,9 +539,12 @@ if        := 'if' expr block ('else' (if | block))?
 handle    := 'handle' block ('catch' '(' IDENT ')' block | 'with' '{' wclause (',' wclause)* ','? '}')
 wclause   := IDENT '(' IDENT ',' IDENT ')' '=>' expr   |   'return' '(' IDENT ')' '=>' expr
 match     := 'match' expr '{' arm (',' arm)* ','? '}'
-arm       := (IDENT ('(' IDENT (',' IDENT)* ')')? | '_') '=>' expr
+arm       := pattern '=>' expr
+pattern   := '_' | INT | STR | 'true' | 'false'
+           | UpperIDENT ('(' pattern (',' pattern)* ')')?   # constructor (nestable)
+           | lowerIDENT                                       # variable binder
 # primaries also include:  lambda := 'fn' '(' params? ')' ('->' type)? block
-#                          perform := 'perform' IDENT '(' expr ')'
+#                          perform := 'perform' IDENT '(' expr ')'  | STR string literal
 logic_or  := logic_and ('||' logic_and)*
 logic_and := comparison ('&&' comparison)*
 comparison:= additive (CMP additive)?               # 連鎖なし
@@ -543,7 +552,7 @@ additive  := multiplicative (('+'|'-') multiplicative)*
 multiplicative := unary (('*'|'/'|'%') unary)*
 unary     := ('-'|'!') unary | postfix
 postfix   := primary (('(' args? ')') | ('[' expr ']'))*   # 呼び出しは IDENT のみ / 添字
-primary   := INT | 'true' | 'false' | IDENT | '(' expr ')' | block
+primary   := INT | STR | 'true' | 'false' | IDENT | '(' expr ')' | block
            | '[' (expr (',' expr)*)? ']'                   # 配列リテラル
 args      := expr (',' expr)*
 
@@ -572,8 +581,8 @@ v0.1 で**意図的に未対応**の事項（いずれも既知の拡張で、�
   （`Fn(Int)->Int ! e` のような細分や効果変数は未対応）なので、**効果多相は gradual 近似**です。
 - 型エイリアスは「裸の名前」のみ（`Nat{...}` のような追加精緻化や、エイリアスのジェネリクスは未対応）。
 - 所有権は単純な linear-use 解析（直線コード＋`if`/`match`）。リージョン/ライフタイム推論なし。
-- 基本型は `Int`/`Bool`/`Unit`/`Array`（要素 Int）/`Fn` ＋ユーザー定義 `enum`。ジェネリクス・文字列・
-  浮動小数点なし。`enum` のパターンは1段（ネスト不可）、コンストラクタフィールドの実行時契約は未強制。
+- 基本型は `Int`/`Bool`/`Unit`/`Array`（要素 Int）/`Fn`/`Str` ＋ユーザー定義 `enum`。ジェネリクス・
+  浮動小数点なし。パターンはネスト可だが網羅性検査はトップレベルのみ、コンストラクタフィールドの実行時契約は未強制。
 - 評価器は CPS のため Python フレームを深く積みます。非常に深い再帰は（引き上げた）再帰上限に当たり得ます。
 - `return` 文なし（ブロック末尾式が値）。
 

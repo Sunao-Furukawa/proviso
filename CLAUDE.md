@@ -102,7 +102,12 @@ function types are gradual (`Fn`, not `Fn(Int)->Int`), so effect polymorphism is
 rather than via explicit effect variables. The CPS evaluator nests Python frames, so very
 deep recursion can hit the (raised) recursion limit.
 
-All seven requested features (#1-#7) are implemented; suite is 48 tests. Possible next
-steps: precise `Fn(T)->T ! e` types with effect-variable polymorphism; more measures;
-static array-length tracking; len-guard occurrence typing; strings; nested patterns; a
-trampolined evaluator for deep recursion.
+All seven requested features (#1-#7) are implemented. Plus: **strings** (`Str` type,
+`"..."` literals with escapes, `+` concat, `==`, `to_str(n)`) and **nested patterns**
+(match patterns are now a recursive `Pattern` AST: PatWild/PatVar/PatLit/PatCtor;
+uppercase-initial idents are constructors, lowercase are binders; literals `0`/`true`/`"x"`
+allowed; exhaustiveness still checked at the top level only). Suite is 55 tests.
+
+Possible next steps: precise `Fn(T)->T ! e` types with effect-variable polymorphism; a
+trampolined evaluator for deep recursion; more measures; static array-length tracking;
+len-guard occurrence typing; nested-pattern exhaustiveness.

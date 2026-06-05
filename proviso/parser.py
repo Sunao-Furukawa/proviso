@@ -340,18 +340,41 @@ class Parser:
         return N.Match(scrutinee, arms, kw.line)
 
     def parse_arm(self) -> N.MatchArm:
-        t = self.eat("ident")
-        ctor = None if t.value == "_" else t.value
-        binders = []
-        if ctor is not None and self.accept("sym", "("):
-            if not self.at("sym", ")"):
-                binders.append(self.eat("ident").value)
-                while self.accept("sym", ","):
-                    binders.append(self.eat("ident").value)
-            self.eat("sym", ")")
+        pat = self.parse_pattern()
         self.eat("sym", "=>")
         body = self.parse_expr()
-        return N.MatchArm(ctor, binders, body, t.line)
+        return N.MatchArm(pat, body, pat.line)
+
+    def parse_pattern(self) -> N.Pattern:
+        t = self.cur
+        if t.kind == "int":
+            self.eat("int")
+            return N.PatLit("int", int(t.value), t.line)
+        if t.kind == "str":
+            self.eat("str")
+            return N.PatLit("str", t.value, t.line)
+        if self.at("kw", "true"):
+            self.eat("kw", "true")
+            return N.PatLit("bool", True, t.line)
+        if self.at("kw", "false"):
+            self.eat("kw", "false")
+            return N.PatLit("bool", False, t.line)
+        if t.kind == "ident":
+            name = self.eat("ident").value
+            if name == "_":
+                return N.PatWild(t.line)
+            # convention: uppercase-initial = constructor, lowercase = binder
+            if name[:1].isupper():
+                args = []
+                if self.accept("sym", "("):
+                    if not self.at("sym", ")"):
+                        args.append(self.parse_pattern())
+                        while self.accept("sym", ","):
+                            args.append(self.parse_pattern())
+                    self.eat("sym", ")")
+                return N.PatCtor(name, args, t.line)
+            return N.PatVar(name, t.line)
+        raise ParseError(f"malformed pattern near {t.value!r}", t.line, t.col)
 
     def parse_if(self) -> N.If:
         kw = self.eat("kw", "if")
@@ -478,6 +501,9 @@ class Parser:
         if t.kind == "int":
             self.eat("int")
             return N.IntLit(int(t.value), t.line)
+        if t.kind == "str":
+            self.eat("str")
+            return N.StrLit(t.value, t.line)
         if self.at("kw", "true"):
             self.eat("kw", "true")
             return N.BoolLit(True, t.line)

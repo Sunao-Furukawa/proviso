@@ -56,6 +56,8 @@ def builtin_signatures() -> Dict[str, FnType]:
         # Array length -- a *measure*, proven non-negative. Refinements may mention
         # `len(a)` (see dependent refinements), which is how bounds checks are stated.
         "len": FnType([("a", T.ARRAY, False)], T.INT(P.PCmp(">=", 0)), []),
+        # Render an Int as a string (for building messages).
+        "to_str": FnType([("n", T.INT(), False)], T.STR, []),
     }
 
 
@@ -209,6 +211,8 @@ class Checker:
             return T.ARRAY
         if te.name == "Fn":
             return T.FUNC
+        if te.name == "Str":
+            return T.STR
         if te.name in self.enums:
             return T.DataType(te.name)
         # Unknown base type name; treat as opaque gradual Int-ish for v1.
@@ -247,6 +251,8 @@ class Checker:
             return T.INT(P.PCmp("==", e.value)), {}
         if isinstance(e, N.BoolLit):
             return T.BOOL, {}
+        if isinstance(e, N.StrLit):
+            return T.STR, {}
         if isinstance(e, N.Var):
             ty = env.get(e.name)
             if ty is None:
@@ -336,31 +342,12 @@ class Checker:
         result_ty: Optional[T.Type] = None
         for arm in e.arms:
             arm_env = dict(env)
-            if arm.ctor is None:
+            self._check_pattern(arm.pattern, st, arm_env)
+            p = arm.pattern
+            if isinstance(p, (N.PatWild, N.PatVar)):
                 has_wild = True
-            else:
-                sig = self.ctors.get(arm.ctor)
-                if sig is None or self.ctor_enum.get(arm.ctor) != enum_name:
-                    self.diags.append(Diagnostic(
-                        code="type", title=f"`{arm.ctor}` is not a constructor of {enum_name}",
-                        line=arm.line, expected=f"a constructor of {enum_name}",
-                        found=f"`{arm.ctor}`",
-                        why="each match arm must name a variant of the scrutinee's enum.",
-                        source_line=self.src_line(arm.line),
-                    ))
-                    continue
-                covered.add(arm.ctor)
-                if len(arm.binders) != len(sig.params):
-                    self.diags.append(Diagnostic(
-                        code="arity",
-                        title=f"`{arm.ctor}` binds {len(sig.params)} field(s)",
-                        line=arm.line, expected=f"{len(sig.params)} binder(s)",
-                        found=f"{len(arm.binders)}",
-                        why="the pattern must bind exactly the constructor's fields.",
-                        source_line=self.src_line(arm.line),
-                    ))
-                for bn, (_n, fty, _l) in zip(arm.binders, sig.params):
-                    arm_env[bn] = fty
+            elif isinstance(p, N.PatCtor):
+                covered.add(p.name)
             bt, be = self._infer(arm.body, arm_env)
             eff.update(be)
             result_ty = bt if result_ty is None else self._join(result_ty, bt)
@@ -369,6 +356,46 @@ class Checker:
             if missing:
                 self._non_exhaustive(e, enum_name, missing)
         return (result_ty or T.UNIT), eff
+
+    def _check_pattern(self, pat: N.Pattern, ty: T.Type, env: Env) -> None:
+        """Type-check a (possibly nested) pattern against `ty`, binding variables."""
+        if isinstance(pat, N.PatWild):
+            return
+        if isinstance(pat, N.PatVar):
+            env[pat.name] = ty
+            return
+        if isinstance(pat, N.PatLit):
+            want = {"int": "Int", "bool": "Bool", "str": "Str"}[pat.kind]
+            if not (isinstance(ty, BaseType) and ty.name == want):
+                self.diags.append(Diagnostic(
+                    code="type", title=f"{pat.kind} literal pattern against {ty}",
+                    line=pat.line, expected=str(ty), found=f"a {pat.kind} literal",
+                    why="a literal pattern must match the scrutinee's base type.",
+                    source_line=self.src_line(pat.line),
+                ))
+            return
+        if isinstance(pat, N.PatCtor):
+            sig = self.ctors.get(pat.name)
+            enum_name = ty.name if isinstance(ty, T.DataType) else None
+            if sig is None or self.ctor_enum.get(pat.name) != enum_name:
+                self.diags.append(Diagnostic(
+                    code="type", title=f"`{pat.name}` is not a constructor of {ty}",
+                    line=pat.line, expected=f"a constructor of {ty}", found=f"`{pat.name}`",
+                    why="constructor patterns must match the scrutinee's enum.",
+                    source_line=self.src_line(pat.line),
+                ))
+                return
+            if len(pat.args) != len(sig.params):
+                self.diags.append(Diagnostic(
+                    code="arity", title=f"`{pat.name}` takes {len(sig.params)} field(s)",
+                    line=pat.line, expected=f"{len(sig.params)} sub-pattern(s)",
+                    found=f"{len(pat.args)}",
+                    why="a constructor pattern must match its arity.",
+                    source_line=self.src_line(pat.line),
+                ))
+                return
+            for sub, (_n, fty, _l) in zip(pat.args, sig.params):
+                self._check_pattern(sub, fty, env)
 
     def _non_exhaustive(self, e: N.Match, enum_name: str, missing: list) -> None:
         ms = ", ".join(missing)
@@ -421,6 +448,10 @@ class Checker:
             return T.BOOL, eff
         if e.op in ("<", "<=", ">", ">=", "==", "!="):
             return T.BOOL, eff
+        # string concatenation
+        if e.op == "+" and isinstance(lt, BaseType) and lt.name == "Str" \
+                and isinstance(rt, BaseType) and rt.name == "Str":
+            return T.STR, eff
         # arithmetic -- propagate intervals so refinements survive computation
         if e.op in ("+", "-", "*"):
             ai = self._interval(lt)

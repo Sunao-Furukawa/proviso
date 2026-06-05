@@ -114,6 +114,12 @@ class BoolLit(Expr):
 
 
 @dataclass
+class StrLit(Expr):
+    value: str
+    line: int = 0
+
+
+@dataclass
 class Var(Expr):
     name: str
     line: int = 0
@@ -213,10 +219,39 @@ class HandleWith(Expr):
     line: int = 0
 
 
+# --- patterns (for match) -------------------------------------------------- #
+class Pattern:
+    line: int = 0
+
+
+@dataclass
+class PatWild(Pattern):
+    line: int = 0
+
+
+@dataclass
+class PatVar(Pattern):
+    name: str = ""
+    line: int = 0
+
+
+@dataclass
+class PatLit(Pattern):
+    kind: str = "int"   # "int" | "bool" | "str"
+    value: object = None
+    line: int = 0
+
+
+@dataclass
+class PatCtor(Pattern):
+    name: str = ""
+    args: List["Pattern"] = field(default_factory=list)
+    line: int = 0
+
+
 @dataclass
 class MatchArm:
-    ctor: Optional[str]            # constructor name, or None for the `_` wildcard
-    binders: List[str]             # field binders for the constructor's fields
+    pattern: Pattern
     body: Expr = None
     line: int = 0
 

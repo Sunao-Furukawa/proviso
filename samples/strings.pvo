@@ -1,0 +1,12 @@
+# Strings. Literals "..." (with \n \t \" \\ escapes), concatenation with `+`,
+# equality, and `to_str` to render an Int.
+
+fn greet(name: Str) -> Str {
+  "Hello, " + name + "!"
+}
+
+fn main() -> Int ! {IO} {
+  print(greet("Proviso"));            # Hello, Proviso!
+  print("answer = " + to_str(42));    # answer = 42
+  0
+}

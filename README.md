@@ -140,8 +140,9 @@ not an oversight):
   gradual runtime check. But the only measure is `len`, array length isn't tracked
   statically, and there's no `len`-guard occurrence typing yet.
 - **User-defined types** — `enum`s with constructors and `match` (single-variant = record),
-  with exhaustiveness reported as a dialogue. Patterns are one level deep; no nested
-  patterns or field access yet.
+  with exhaustiveness reported as a dialogue. Patterns **nest** (`Cons(a, Cons(b, rest))`)
+  and allow constructor / variable / wildcard / literal patterns; exhaustiveness is checked
+  at the top level. Plus **strings** (`Str`, `"..."`, `+`, `==`, `to_str`).
 - **First-class functions** (lambdas, `Fn`-typed params) and **algebraic effects** —
   `perform Op(x)` + `handle … with { Op(x, k) => …, return(v) => … }`, on a CPS evaluator
   so the resumption `k` is **fully multi-shot** (`k(0) + k(10)` resumes twice). Operation

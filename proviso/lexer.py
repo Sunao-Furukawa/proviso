@@ -60,6 +60,29 @@ def tokenize(src: str) -> List[Token]:
             while i < n and src[i] != "\n":
                 i += 1
             continue
+        if c == '"':  # string literal with simple escapes
+            start_col = col
+            advance()  # opening quote
+            chars = []
+            while i < n and src[i] != '"':
+                ch = src[i]
+                if ch == "\\":
+                    advance()
+                    if i >= n:
+                        break
+                    esc = src[i]
+                    chars.append({"n": "\n", "t": "\t", '"': '"', "\\": "\\"}.get(esc, esc))
+                    advance()
+                elif ch == "\n":
+                    raise LexError("unterminated string literal", line, start_col)
+                else:
+                    chars.append(ch)
+                    advance()
+            if i >= n:
+                raise LexError("unterminated string literal", line, start_col)
+            advance()  # closing quote
+            toks.append(Token("str", "".join(chars), line, start_col))
+            continue
         if c.isdigit():
             start = i
             start_col = col

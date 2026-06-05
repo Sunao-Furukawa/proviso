@@ -267,6 +267,39 @@ check("handler may ignore k (0-resumption) -> -1", r == -1, r)
 d, _ = analyze_src(open(os.path.join(EX, "09_effect_leak.pvo"), encoding="utf-8-sig").read())
 check("performed effect that escapes -> effect-leak", codes(d) == ["effect-leak"], codes(d))
 
+# --- strings ---------------------------------------------------------------- #
+print("strings:")
+_str = open(os.path.join(SAMPLES, "strings.pvo"), encoding="utf-8-sig").read()
+d, w = analyze_src(_str)
+check("strings sample checks clean", d == [], codes(d))
+r, o = run_src(_str)
+check("strings run -> [Hello, Proviso!, answer = 42]",
+      r == 0 and o == ["Hello, Proviso!", "answer = 42"], (r, o))
+_eq = ('fn f(a: Str, b: Str) -> Bool { a == b }\n'
+       'fn main() -> Int { if f("x", "x") { 1 } else { 0 } }\n')
+r, _ = run_src(_eq)
+check("string equality works", r == 1, r)
+
+# --- nested patterns -------------------------------------------------------- #
+print("nested patterns:")
+_lst = open(os.path.join(SAMPLES, "list.pvo"), encoding="utf-8-sig").read()
+d, w = analyze_src(_lst)
+check("list sample checks clean (recursive enum)", d == [], codes(d))
+r, o = run_src(_lst)
+check("list: sum=60, second=20", r == 60 and o == ["60", "20"], (r, o))
+
+_nest = ("enum L { Nil(), Cons(Int, L) }\n"
+         "fn snd(xs: L) -> Int { match xs { Cons(a, Cons(b, r)) => b, _ => 0 - 1 } }\n"
+         "fn main() -> Int { snd(Cons(1, Nil())) }\n")
+r, _ = run_src(_nest)
+check("nested pattern falls through to wildcard -> -1", r == -1, r)
+
+_lit = ("enum W { Wrap(Int) }\n"
+        "fn f(n: Int) -> Int { match Wrap(n) { Wrap(0) => 100, Wrap(x) => x } }\n"
+        "fn main() -> Int { f(0) + f(7) }\n")
+r, _ = run_src(_lit)
+check("literal pattern: f(0)+f(7) = 107", r == 107, r)
+
 print()
 print(f"{_passed} passed, {_failed} failed")
 sys.exit(1 if _failed else 0)

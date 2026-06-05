@@ -150,6 +150,8 @@ class Interpreter:
             self._enforce(pname, pty, val, benv)
         if name == "len":
             return len(args[0])
+        if name == "to_str":
+            return str(args[0])
         if name == "print":
             line = str(_show(args[0]))
             self.output.append(line)
@@ -196,6 +198,8 @@ class Interpreter:
         if isinstance(e, N.IntLit):
             return k(e.value)
         if isinstance(e, N.BoolLit):
+            return k(e.value)
+        if isinstance(e, N.StrLit):
             return k(e.value)
         if isinstance(e, N.Var):
             if e.name in env:
@@ -245,6 +249,12 @@ class Interpreter:
             e.right, env, lambda b: k(self._arith(e.op, a, b, e.line)), h), h)
 
     def _arith(self, op, a, b, line):
+        if op == "+":
+            return a + b      # Int addition or Str concatenation
+        if op == "-":
+            return a - b
+        if op == "*":
+            return a * b
         if op in ("/", "%"):
             if b == 0:
                 raise ProvisoRuntimeError(
@@ -252,9 +262,19 @@ class Interpreter:
                     f"Int{{n | n != 0}} on the divisor would have caught this statically"
                 )
             return a // b if op == "/" else a % b
-        return {"+": a + b, "-": a - b, "*": a * b,
-                "<": a < b, "<=": a <= b, ">": a > b, ">=": a >= b,
-                "==": a == b, "!=": a != b}[op]
+        if op == "<":
+            return a < b
+        if op == "<=":
+            return a <= b
+        if op == ">":
+            return a > b
+        if op == ">=":
+            return a >= b
+        if op == "==":
+            return a == b
+        if op == "!=":
+            return a != b
+        raise ProvisoRuntimeError(f"unknown operator {op}")
 
     def _index(self, arr, idx, line):
         if not isinstance(arr, list):
@@ -268,14 +288,29 @@ class Interpreter:
 
     def _match(self, e: N.Match, scrut, env, k, h):
         for arm in e.arms:
-            if arm.ctor is None or (isinstance(scrut, Data) and arm.ctor == scrut.ctor):
-                arm_env = dict(env)
-                if arm.ctor is not None:
-                    for bn, fv in zip(arm.binders, scrut.fields):
-                        arm_env[bn] = fv
+            arm_env = dict(env)
+            if self._match_pat(arm.pattern, scrut, arm_env):
                 return self.eval(arm.body, arm_env, k, h)
         raise ProvisoRuntimeError(
             f"no matching arm for {getattr(scrut, 'ctor', scrut)} at line {e.line}")
+
+    def _match_pat(self, pat, value, env) -> bool:
+        if isinstance(pat, N.PatWild):
+            return True
+        if isinstance(pat, N.PatVar):
+            env[pat.name] = value
+            return True
+        if isinstance(pat, N.PatLit):
+            return value == pat.value
+        if isinstance(pat, N.PatCtor):
+            if not (isinstance(value, Data) and value.ctor == pat.name
+                    and len(value.fields) == len(pat.args)):
+                return False
+            for sub, fv in zip(pat.args, value.fields):
+                if not self._match_pat(sub, fv, env):
+                    return False
+            return True
+        return False
 
     def _apply(self, name, vals, env, k, h):
         callee = env.get(name)

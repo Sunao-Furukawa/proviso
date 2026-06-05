@@ -1,0 +1,25 @@
+# Recursive enums + nested patterns. A cons-list with `sum` (recursive, exhaustive)
+# and `second` (a nested constructor pattern Cons(a, Cons(b, rest)) plus a wildcard).
+
+enum List { Nil(), Cons(Int, List) }
+
+fn sum(xs: List) -> Int {
+  match xs {
+    Nil() => 0,
+    Cons(head, tail) => head + sum(tail)
+  }
+}
+
+fn second(xs: List) -> Int {
+  match xs {
+    Cons(a, Cons(b, rest)) => b,
+    _ => 0 - 1
+  }
+}
+
+fn main() -> Int ! {IO} {
+  let xs = Cons(10, Cons(20, Cons(30, Nil())));
+  print(sum(xs));        # 60
+  print(second(xs));     # 20
+  sum(xs)                # returns 60
+}

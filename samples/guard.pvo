@@ -1,0 +1,31 @@
+# `len`-guard occurrence typing. A guard like `if len(xs) > 0` or `if i < len(xs)`
+# records that fact for the dependent solver, so the array access inside is PROVEN
+# in range -- and NO runtime bounds check is inserted (zero cost). Without the guard
+# the same access would be a deferred runtime check.
+
+fn first(xs: Array) -> Int {
+  if len(xs) > 0 {
+    xs[0]              # proven: 0 < len(xs)
+  } else {
+    0 - 1
+  }
+}
+
+fn at(xs: Array, i: Int) -> Int {
+  if i >= 0 {
+    if i < len(xs) {
+      xs[i]            # proven: 0 <= i && i < len(xs)
+    } else {
+      0 - 1
+    }
+  } else {
+    0 - 1
+  }
+}
+
+fn main() -> Int ! {IO} {
+  let a = [10, 20, 30];
+  print(first(a));     # 10
+  print(at(a, 2));     # 30
+  at(a, 9)             # 9 >= len(a) -> -1
+}

@@ -344,6 +344,21 @@ _cnt = ("fn count(n: Int) -> Int { if n == 0 { 0 } else { count(n - 1) } }\n"
 r, _ = run_src(_cnt)
 check("count(300000) = 0 (trampolined)", r == 0, r)
 
+# --- #5b: len-guard occurrence typing --------------------------------------- #
+print("len-guard occurrence typing:")
+_g = open(os.path.join(SAMPLES, "guard.pvo"), encoding="utf-8-sig").read()
+d, w = analyze_src(_g)
+check("guarded array access is PROVEN (no gradual points)",
+      d == [] and w == [], (codes(d), len(w)))
+r, o = run_src(_g)
+check("guard sample runs -> -1 with [10, 30]",
+      r == -1 and o == ["10", "30"], (r, o))
+
+# without the guard, the same access is a runtime check (a gradual point)
+_ung = ("fn head(xs: Array) -> Int { xs[0] }\nfn main() -> Int { head([1, 2]) }\n")
+d, w = analyze_src(_ung)
+check("unguarded index stays a gradual point", d == [] and len(w) == 1, (codes(d), len(w)))
+
 print()
 print(f"{_passed} passed, {_failed} failed")
 sys.exit(1 if _failed else 0)

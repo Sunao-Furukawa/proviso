@@ -92,15 +92,13 @@ to runtime checks instead. Source files use the `.pvo` extension.
 
 ## Bounded scope (deliberate, documented in README.md)
 
-Dependent refinements work but the only measure is `len`; array *length* is not tracked
-statically (so a literal index on a `let`-bound array is runtime-checked, not proven);
-no occurrence typing on `len(x)` guards yet. simple linear-use ownership; base types are
-`Int`/`Bool`/`Unit`/`Array(Int)`/`Fn` plus user `enum`s; aliases are bare names only. Enum
-match patterns are one level deep (`Ctor(vars)` / `_`); no nested patterns, no `.field`
-access (use match), no runtime contract enforcement on constructor fields. First-class
-function types are gradual (`Fn`, not `Fn(Int)->Int`), so effect polymorphism is gradual
-rather than via explicit effect variables. The CPS evaluator nests Python frames, so very
-deep recursion can hit the (raised) recursion limit.
+Dependent refinements work; the only measure is `len`. **len-guard occurrence typing (#5b)
+is implemented**: a guard like `if len(xs) > 0` / `if i < len(xs)` records a path fact
+(self.assumptions in the checker) so the guarded array access is statically proven (no
+runtime check). Array *length* is still not tracked statically, so an *unguarded* literal
+index is runtime-checked. Linear-use ownership; base types `Int`/`Bool`/`Unit`/`Array(Int)`/
+`Fn`/`Str` plus user `enum`s. Constructor-field runtime contracts not enforced;
+function-arg subtyping is gradual.
 
 All seven requested features (#1-#7) are implemented. Plus: **strings** (`Str` type,
 `"..."` literals with escapes, `+` concat, `==`, `to_str(n)`) and **nested patterns**
@@ -120,7 +118,8 @@ deep recursion (e.g. sumto(100000), count(300000)) stays flat instead of overflo
 Python C stack. Handler boundaries / resumptions use nested `_drive` calls (one frame per
 active handler/resume, not per recursion level). Suite is 63 tests.
 
-Possible next steps: nested cross-handler algebraic-effect semantics (the synchronous-delim
-model handles single/nested-same-handler cases, not an inner body performing an outer op);
-more measures; static array-length tracking; len-guard occurrence typing; nested-pattern
-exhaustiveness; precise function-arg subtyping.
+Roadmap agreed with the user (do in this order): **#5b len-guard occurrence typing [DONE]**
+-> #4 static array-length tracking -> (#3 more measures) -> #8 contract erasure + blame ->
+#2 precise function-arg subtyping -> #9 typestate -> #10 LSP. Deferred: #1 nested
+cross-handler algebraic-effect generalization (high risk). Also: nested-pattern
+exhaustiveness.

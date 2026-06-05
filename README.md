@@ -137,8 +137,10 @@ not an oversight):
 - **Dependent refinements** (`hi: Int{h | h >= lo}`, `i: Int{k | k < len(xs)}`) and **arrays**
   (`[1,2,3]`, `len`, `a[i]`) are real: call sites discharge obligations via Z3 — proven →
   no runtime check; provably impossible → hard error with a counterexample; otherwise →
-  gradual runtime check. But the only measure is `len`, array length isn't tracked
-  statically, and there's no `len`-guard occurrence typing yet.
+  gradual runtime check. A guard like `if len(xs) > 0` / `if i < len(xs)` is understood
+  (occurrence typing), so the guarded access is *proven* (no runtime check). The only
+  measure is `len`, and array length is not yet tracked statically (unguarded literal
+  indexing stays a runtime check).
 - **User-defined types** — `enum`s with constructors and `match` (single-variant = record),
   with exhaustiveness reported as a dialogue. Patterns **nest** (`Cons(a, Cons(b, rest))`)
   and allow constructor / variable / wildcard / literal patterns; exhaustiveness is checked

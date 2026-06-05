@@ -78,6 +78,7 @@ class Checker:
         self.enum_ctors: Dict[str, List[str]] = {}
         self.ctors: Dict[str, FnType] = {}
         self.ctor_enum: Dict[str, str] = {}
+        self.assumptions: list = []  # path facts true in the current branch (#5)
         for e in self.enums.values():
             self.enum_ctors[e.name] = [v.name for v in e.variants]
             for v in e.variants:
@@ -236,6 +237,7 @@ class Checker:
     def _check_fn(self, d: N.FnDecl) -> None:
         sig = self.fns[d.name]
         env: Env = {name: ty for (name, ty, _) in sig.params}
+        self.assumptions = []  # path facts known in the current branch (len-guards etc.)
         body_ty, body_effects = self._infer(d.body, env)
 
         # return-type obligation
@@ -575,15 +577,54 @@ class Checker:
 
     def _infer_if(self, e: N.If, env: Env) -> Tuple[T.Type, Dict[str, int]]:
         ct, ce = self._infer(e.cond, env)
+        saved = self.assumptions
+        # then-branch: refine variables (occurrence typing) and add guard facts
+        # (e.g. `len(xs) > 0`) so dependent obligations inside can be discharged.
         then_env = self._refine_env(e.cond, env, negate=False)
+        self.assumptions = saved + self._guard_facts(e.cond, negate=False)
         tt, te = self._infer(e.then, then_env)
+        self.assumptions = saved
         eff = {**ce, **te}
         if e.els is None:
             return T.UNIT, eff
         else_env = self._refine_env(e.cond, env, negate=True)
+        self.assumptions = saved + self._guard_facts(e.cond, negate=True)
         et, ee = self._infer(e.els, else_env)
+        self.assumptions = saved
         eff.update(ee)
         return self._join(tt, et), eff
+
+    _NEG_CMP = {"<": ">=", "<=": ">", ">": "<=", ">=": "<", "==": "!=", "!=": "=="}
+
+    def _expr_to_term(self, e: N.Expr):
+        """Best-effort lowering of an expression to a refinement term (or None)."""
+        if isinstance(e, N.IntLit):
+            return P.TInt(e.value)
+        if isinstance(e, N.UnOp) and e.op == "-" and isinstance(e.operand, N.IntLit):
+            return P.TInt(-e.operand.value)
+        if isinstance(e, N.Var):
+            return P.TVar(e.name)
+        if (isinstance(e, N.Call) and e.fn == "len" and len(e.args) == 1
+                and isinstance(e.args[0], N.Var)):
+            return P.TLen(e.args[0].name)
+        if isinstance(e, N.BinOp) and e.op in ("+", "-", "*"):
+            lt, rt = self._expr_to_term(e.left), self._expr_to_term(e.right)
+            if lt is not None and rt is not None:
+                return P.TArith(e.op, lt, rt)
+        return None
+
+    def _guard_facts(self, cond: N.Expr, negate: bool) -> list:
+        """Closed predicates a guard makes true in its branch (e.g. `len(xs) > 0`)."""
+        if isinstance(cond, N.BinOp) and cond.op == "&&" and not negate:
+            return self._guard_facts(cond.left, False) + self._guard_facts(cond.right, False)
+        if isinstance(cond, N.BinOp) and cond.op == "||" and negate:
+            return self._guard_facts(cond.left, True) + self._guard_facts(cond.right, True)
+        if isinstance(cond, N.BinOp) and cond.op in ("<", "<=", ">", ">=", "==", "!="):
+            lt, rt = self._expr_to_term(cond.left), self._expr_to_term(cond.right)
+            if lt is not None and rt is not None:
+                op = self._NEG_CMP[cond.op] if negate else cond.op
+                return [P.PRel(op, lt, rt)]
+        return []
 
     def _infer_handle(self, e: N.Handle, env: Env) -> Tuple[T.Type, Dict[str, int]]:
         bt, be = self._infer(e.body, env)
@@ -698,11 +739,12 @@ class Checker:
         return None  # complex argument -> cannot name it symbolically
 
     def _assumptions(self, env: Env) -> list:
-        """Everything currently known: each in-scope refined Int becomes a fact."""
+        """Everything currently known: each in-scope refined Int, plus branch facts."""
         out = []
         for name, ty in env.items():
             if isinstance(ty, BaseType) and ty.name == "Int" and not ty.refine.unknown:
                 out.append(P.subst_value(ty.refine.pred, P.TVar(name)))
+        out.extend(self.assumptions)  # path facts from enclosing guards (#5)
         return out
 
     def _gradual(self, line: int, context: str, what: str) -> None:

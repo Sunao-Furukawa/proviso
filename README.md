@@ -146,8 +146,10 @@ not an oversight):
 - **First-class functions** (lambdas, `Fn`-typed params) and **algebraic effects** —
   `perform Op(x)` + `handle … with { Op(x, k) => …, return(v) => … }`, on a CPS evaluator
   so the resumption `k` is **fully multi-shot** (`k(0) + k(10)` resumes twice). Operation
-  names are effect labels; handling discharges them. First-class function types are gradual
-  (`Fn`), so effect polymorphism is gradual; precise `Fn(T)->T ! e` types are future work.
+  names are effect labels; handling discharges them. Function types can be gradual (`Fn`) or
+  **precise** (`Fn(T) -> T ! e`) with **effect-variable polymorphism** — a higher-order
+  function's effect row can be the variable `e`, instantiated at each call from the actual
+  function argument's effects (pure arg → `{}`, IO arg → `{IO}`).
 - **Effects** are labels with optional refinement parameters; first-class, fully resumable
   effect handlers (multi-shot continuations) are modeled only for `Exc` here.
 - **Ownership** uses a simple "any use moves; borrow/clone read" model over straight-line

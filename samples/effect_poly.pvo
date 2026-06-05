@@ -1,0 +1,22 @@
+# Precise function types + effect-variable polymorphism.
+# `apply`'s type says its effect row is exactly that of its function argument `f`
+# (the effect variable `e`). So passing the pure `inc` instantiates e := {} (no
+# effects), while passing the IO-performing `shout` instantiates e := {IO}.
+
+fn apply(f: Fn(Int) -> Int ! e, x: Int) -> Int ! e {
+  f(x)
+}
+
+fn inc(n: Int) -> Int {
+  n + 1
+}
+
+fn shout(n: Int) -> Int ! {IO} {
+  print(n);
+  n
+}
+
+fn main() -> Int ! {IO} {
+  let a = apply(inc, 41);    # e := {} -- pure
+  apply(shout, a)            # e := {IO}
+}

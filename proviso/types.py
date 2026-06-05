@@ -99,5 +99,29 @@ class DataType(Type):
         return self.name
 
 
+@dataclass
+class ArrowType(Type):
+    """A precise first-class function type: Fn(T, ...) -> T ! {effects}.
+
+    Effect-row entries whose name is lowercase are *effect variables* (polymorphism);
+    capitalised names (IO, Net, ...) are concrete effects.
+    """
+    params: list          # list[Type]
+    ret: Type
+    effects: list = field(default_factory=list)  # list[Effect]
+
+    def __str__(self) -> str:
+        ps = ", ".join(str(p) for p in self.params)
+        eff = ""
+        if self.effects:
+            eff = " ! {" + ", ".join(e.name for e in self.effects) + "}"
+        return f"Fn({ps}) -> {self.ret}{eff}"
+
+
+def is_effect_var(name: str) -> bool:
+    """Effect-row entries that are lowercase-initial are polymorphic effect variables."""
+    return bool(name) and name[0].islower()
+
+
 def effects_str(effects: List[Effect]) -> str:
     return "{" + ", ".join(str(e) for e in effects) + "}" if effects else "{}"

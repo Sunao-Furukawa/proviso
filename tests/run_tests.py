@@ -300,6 +300,35 @@ _lit = ("enum W { Wrap(Int) }\n"
 r, _ = run_src(_lit)
 check("literal pattern: f(0)+f(7) = 107", r == 107, r)
 
+# --- precise function types + effect-variable polymorphism ------------------ #
+print("function types + effect polymorphism:")
+_ep = open(os.path.join(SAMPLES, "effect_poly.pvo"), encoding="utf-8-sig").read()
+d, w = analyze_src(_ep)
+check("effect-poly sample checks clean", d == [], codes(d))
+r, o = run_src(_ep)
+check("effect-poly runs -> 42 (prints 42)", r == 42 and o == ["42"], (r, o))
+
+# IO-performing arg instantiates e := {IO}; declaring `! {}` then leaks
+_leak = ("fn apply(f: Fn(Int) -> Int ! e, x: Int) -> Int ! e { f(x) }\n"
+         "fn shout(n: Int) -> Int ! {IO} { print(n); n }\n"
+         "fn main() -> Int ! {} { apply(shout, 7) }\n")
+d, _ = analyze_src(_leak)
+check("effect var instantiated to {IO} -> leak under `! {}`",
+      codes(d) == ["effect-leak"], codes(d))
+
+# pure arg instantiates e := {}, so `! {}` is satisfied
+_pure = ("fn apply(f: Fn(Int) -> Int ! e, x: Int) -> Int ! e { f(x) }\n"
+         "fn inc(n: Int) -> Int { n + 1 }\n"
+         "fn main() -> Int ! {} { apply(inc, 7) }\n")
+d, _ = analyze_src(_pure)
+check("effect var instantiated to {} -> no leak", d == [], codes(d))
+
+# passing a non-function where a function is expected -> type error
+_bad = ("fn apply(f: Fn(Int) -> Int ! e, x: Int) -> Int ! e { f(x) }\n"
+        "fn main() -> Int { apply(5, 7) }\n")
+d, _ = analyze_src(_bad)
+check("non-function where Fn expected -> type error", "type" in codes(d), codes(d))
+
 print()
 print(f"{_passed} passed, {_failed} failed")
 sys.exit(1 if _failed else 0)

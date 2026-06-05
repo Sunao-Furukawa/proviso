@@ -106,6 +106,9 @@ class Interpreter:
         self.output: List[str] = []
 
     def _sem_type(self, te: Optional[N.TypeExpr]) -> T.Type:
+        # function types carry no runtime contract; treat as the gradual Fn marker
+        if isinstance(te, N.FnTypeExpr):
+            return T.FUNC
         # resolve type aliases before lowering, so runtime contracts on aliased
         # refinement types (e.g. `type Nat = Int{n | n >= 0}`) are still enforced
         seen = set()
@@ -204,6 +207,8 @@ class Interpreter:
         if isinstance(e, N.Var):
             if e.name in env:
                 return k(env[e.name])
+            if e.name in self.fns:  # bare function name used as a value -> a closure
+                return k(Closure(self.fn_params[e.name], self.fns[e.name].body, {}))
             raise ProvisoRuntimeError(f"unbound variable `{e.name}`")
         if isinstance(e, N.UnOp):
             return self.eval(e.operand, env,

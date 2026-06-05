@@ -149,7 +149,11 @@ class Parser:
         ty = self.parse_type()
         return N.Param(t.value, ty, linear, t.line)
 
-    def parse_type(self) -> N.TypeExpr:
+    def parse_type(self):
+        # precise function type:  Fn(T, ...) -> T ! {effects}
+        if (self.at("ident") and self.cur.value == "Fn"
+                and self.peek(1).kind == "sym" and self.peek(1).value == "("):
+            return self.parse_fn_type()
         t = self.eat("ident")
         refine = None
         if self._at_refine_brace():
@@ -157,6 +161,22 @@ class Parser:
             refine = self.parse_refine()
             self.eat("sym", "}")
         return N.TypeExpr(t.value, refine, t.line)
+
+    def parse_fn_type(self) -> N.FnTypeExpr:
+        kw = self.eat("ident")  # Fn
+        self.eat("sym", "(")
+        params = []
+        if not self.at("sym", ")"):
+            params.append(self.parse_type())
+            while self.accept("sym", ","):
+                params.append(self.parse_type())
+        self.eat("sym", ")")
+        self.eat("sym", "->")
+        ret = self.parse_type()
+        effects = []
+        if self.accept("sym", "!"):
+            effects = self.parse_effect_row()
+        return N.FnTypeExpr(params, ret, effects, kw.line)
 
     def parse_refine(self) -> N.RefineExpr:
         var = self.eat("ident").value

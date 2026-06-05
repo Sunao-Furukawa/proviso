@@ -31,6 +31,15 @@ class EffectExpr:
     line: int = 0
 
 
+@dataclass
+class FnTypeExpr:
+    """Surface syntax for a precise function type: Fn(T, ...) -> T ! {effects}."""
+    params: List[TypeExpr]
+    ret: TypeExpr
+    effects: List[EffectExpr] = field(default_factory=list)
+    line: int = 0
+
+
 # --- Declarations ---------------------------------------------------------- #
 @dataclass
 class Param:

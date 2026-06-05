@@ -198,6 +198,12 @@ class Checker:
     def _sem_type(self, te: Optional[N.TypeExpr]) -> T.Type:
         if te is None:
             return T.UNIT
+        if isinstance(te, N.FnTypeExpr):
+            return T.ArrowType(
+                [self._sem_type(p) for p in te.params],
+                self._sem_type(te.ret),
+                [Effect(ef.name) for ef in te.effects],
+            )
         te = self._resolve_alias(te)
         if te.name == "Bool":
             return T.BOOL
@@ -256,7 +262,11 @@ class Checker:
         if isinstance(e, N.Var):
             ty = env.get(e.name)
             if ty is None:
-                # Unknown variable -- surface gently, keep going.
+                # a bare top-level function name used as a value -> a function reference
+                fn = self.fns.get(e.name)
+                if fn is not None:
+                    return T.ArrowType([t for _n, t, _l in fn.params], fn.ret,
+                                       list(fn.effects)), {}
                 self.diags.append(Diagnostic(
                     code="unbound", title=f"unknown name `{e.name}`",
                     line=e.line, expected="a value in scope", found="nothing",
@@ -291,8 +301,19 @@ class Checker:
         if isinstance(e, N.Match):
             return self._infer_match(e, env)
         if isinstance(e, N.Lambda):
-            # a function value; its body's effects happen when called, not here
-            return T.FUNC, {}
+            # a function value: infer its precise arrow type (params -> ret ! effects).
+            # The effects are latent here -- they ride in the type, performed on call.
+            penv = dict(env)
+            params = []
+            for p in e.params:
+                pt = self._sem_type(p.type)
+                penv[p.name] = pt
+                params.append(pt)
+            bt, beff = self._infer(e.body, penv)
+            ret = self._sem_type(e.ret) if e.ret is not None else bt
+            if e.ret is not None:
+                self._check_assign(bt, ret, e.line, "lambda result")
+            return T.ArrowType(params, ret, [Effect(n) for n in beff]), {}
         if isinstance(e, N.Perform):
             _at, ae = self._infer(e.arg, env)
             # the value a `perform` yields is whatever the handler resumes with: gradual
@@ -481,8 +502,18 @@ class Checker:
         # resumption `k`). We don't know its result/effects statically -> gradual, and
         # its effects are *polymorphic*: they ride with the value, not this call site.
         callee_ty = env.get(e.fn)
-        if isinstance(callee_ty, BaseType) and callee_ty.name == "Fn":
+        if isinstance(callee_ty, T.ArrowType):
             eff: Dict[str, int] = {}
+            for a in e.args:
+                _at, ae = self._infer(a, env)
+                eff.update(ae)
+            # calling a function value performs its whole effect row, including any
+            # effect variable (that variable is what makes the caller polymorphic)
+            for ef in callee_ty.effects:
+                eff[ef.name] = e.line
+            return callee_ty.ret, eff
+        if isinstance(callee_ty, BaseType) and callee_ty.name == "Fn":
+            eff = {}
             for a in e.args:
                 _at, ae = self._infer(a, env)
                 eff.update(ae)
@@ -515,16 +546,31 @@ class Checker:
             t = self._arg_term(a)
             if t is not None:
                 term_map[pn] = t
+        arg_types = []
         for arg, (pname, pty, _lin) in zip(e.args, sig.params):
             at, ae = self._infer(arg, env)
+            arg_types.append(at)
             eff.update(ae)
             # `print` is intentionally polymorphic over base types in v1.
             if e.fn == "print":
                 continue
             self._check_arg(at, pty, arg, e.fn, pname, env, term_map)
 
+        # effect-variable polymorphism: bind the variables in arrow-typed parameters
+        # from the concrete effects of the actual function arguments.
+        subst: Dict[str, set] = {}
+        for (pname, pty, _l), at in zip(sig.params, arg_types):
+            if isinstance(pty, T.ArrowType) and isinstance(at, T.ArrowType):
+                argnames = {ef.name for ef in at.effects}
+                for ef in pty.effects:
+                    if T.is_effect_var(ef.name):
+                        subst.setdefault(ef.name, set()).update(argnames)
         for ef in sig.effects:
-            eff[ef.name] = e.line
+            if T.is_effect_var(ef.name):
+                for nm in subst.get(ef.name, set()):
+                    eff[nm] = e.line
+            else:
+                eff[ef.name] = e.line
         return sig.ret, eff
 
     def _infer_if(self, e: N.If, env: Env) -> Tuple[T.Type, Dict[str, int]]:
@@ -597,6 +643,18 @@ class Checker:
 
     def _check_arg(self, arg_ty: T.Type, param_ty: T.Type, arg: N.Expr,
                    fn: str, pname: str, env: Env, term_map: dict) -> None:
+        if isinstance(param_ty, T.ArrowType):
+            ok = isinstance(arg_ty, T.ArrowType) or (
+                isinstance(arg_ty, BaseType) and arg_ty.name == "Fn")
+            if not ok:
+                self.diags.append(Diagnostic(
+                    code="type",
+                    title=f"argument `{pname}` of `{fn}`: expected a function, found {arg_ty}",
+                    line=arg.line, expected=str(param_ty), found=str(arg_ty),
+                    why="a function-typed parameter needs a function value.",
+                    source_line=self.src_line(arg.line),
+                ))
+            return
         if isinstance(param_ty, T.DataType):
             if not (isinstance(arg_ty, T.DataType) and arg_ty.name == param_ty.name):
                 self.diags.append(Diagnostic(

@@ -108,6 +108,14 @@ All seven requested features (#1-#7) are implemented. Plus: **strings** (`Str` t
 uppercase-initial idents are constructors, lowercase are binders; literals `0`/`true`/`"x"`
 allowed; exhaustiveness still checked at the top level only). Suite is 55 tests.
 
-Possible next steps: precise `Fn(T)->T ! e` types with effect-variable polymorphism; a
-trampolined evaluator for deep recursion; more measures; static array-length tracking;
-len-guard occurrence typing; nested-pattern exhaustiveness.
+Plus **precise function types** `Fn(T, ...) -> T ! {effects}` (ArrowType, FnTypeExpr) with
+**effect-variable polymorphism**: lowercase effect-row names are variables; a HOF's `! e` is
+instantiated at each call from the actual function argument's effects (substitution in
+_infer_call). Bare top-level fn names are function references (ArrowType / interp Closure).
+Bounded: function-arg subtyping is gradual (params/ret not strictly matched), single-level
+var instantiation, and the name-based effect-inference pass (#3) does not substitute vars.
+Suite is 60 tests.
+
+Possible next steps: a trampolined evaluator for deep recursion (the one remaining
+requested item); more measures; static array-length tracking; len-guard occurrence typing;
+nested-pattern exhaustiveness.

@@ -106,7 +106,7 @@ fn main() -> Int ! {IO} {
 | `Bool` | 真偽値 | 付けられない（常に gradual） |
 | `Unit` | 値なし。ブロックが末尾式を持たないときの値。表示は `()` | － |
 | `Array` | 整数の配列（v0.1 は要素 Int 固定）。リテラル `[1, 2, 3]`、長さ `len(a)`、添字 `a[i]` | － |
-| `Fn` | 第一級関数値（ラムダや捕捉した継続）。v0.1 では引数/効果を細分しない gradual な関数型 | － |
+| `Fn` | 第一級関数値。ゆるい `Fn`（gradual）／精密な `Fn(T, ...) -> T ! {効果}`（効果変数で多相）の両方 | － |
 | `Str` | 文字列。リテラル `"..."`（`\n \t \" \\`）、連結 `+`、比較 `==`/`!=`、`to_str(n)` | － |
 
 - **`Int`**（精緻化なし）は内部的に「未知の述語 `?`」を持つ**漸進的（gradual）**な型です。あらゆる要求と
@@ -235,10 +235,11 @@ fn greet(msg: Int) -> Int ! {IO} {
 ### 第一級関数（ラムダ）
 
 関数は値です。**ラムダ** `fn(引数...) -> 戻り型 { 本体 }` を式として書け、変数に束縛・他の関数へ渡せます。
-関数型の引数は `Fn`（gradual な関数型）で受けます。
+トップレベル関数名を裸で書くと**関数参照**（値）になります。関数型の引数は、ゆるい `Fn`（gradual）でも、
+**精密な `Fn(T, ...) -> T ! {効果}`** でも受けられます。
 
 ```proviso
-fn twice(f: Fn, x: Int) -> Int { f(f(x)) }
+fn twice(f: Fn, x: Int) -> Int { f(f(x)) }     # ゆるい Fn
 
 fn main() -> Int ! {IO} {
   let g = fn(n: Int) -> Int { n * 10 };
@@ -246,7 +247,15 @@ fn main() -> Int ! {IO} {
 }
 ```
 
-`Fn` 値の呼び出しは結果・効果ともに gradual に扱われます（効果多相の簡易版）。
+**効果多相（effect-variable polymorphism）**: 効果行に**小文字の効果変数**を書けます。
+
+```proviso
+fn apply(f: Fn(Int) -> Int ! e, x: Int) -> Int ! e { f(x) }
+```
+
+`apply` の効果は引数 `f` の効果そのもの（変数 `e`）です。呼び出し時、実引数の関数の効果で `e` が
+**具体化**されます——純粋関数を渡せば `e := {}`、`! {IO}` の関数を渡せば `e := {IO}`。`Fn`（裸）値の
+呼び出しは従来どおり gradual に扱われます。
 
 ---
 
@@ -526,7 +535,8 @@ fn_decl   := 'fn' IDENT '(' params? ')' ('->' type)? ('!' eff_row)? block
 params    := param (',' param)*
 param     := 'linear'? IDENT ':' type
 
-type      := IDENT ('{' IDENT '|' pred '}')?        # IDENT は Int/Bool/Unit またはエイリアス名
+type      := fn_type | IDENT ('{' IDENT '|' pred '}')?  # IDENT: Int/Bool/Unit/Str/Array/enum/エイリアス
+fn_type   := 'Fn' '(' (type (',' type)*)? ')' '->' type ('!' eff_row)?
 eff_row   := '{' effect (',' effect)* '}' | effect
 effect    := IDENT ('{' IDENT '|' pred '}')?
 
@@ -577,8 +587,9 @@ v0.1 で**意図的に未対応**の事項（いずれも既知の拡張で、�
   返すインターフェイスはバックエンド非依存に設計されています。
 - **依存精緻化**は動くが、measure は `len` のみ。配列の長さは静的に追跡しないので、`let` 束縛した配列への
   リテラル添字は（証明されず）実行時チェックになります。`len(x)` ガードの occurrence typing も未対応。
-- 代数的効果ハンドラは **multi-shot 完全対応**（CPS 評価器）。ただし第一級関数型は gradual な `Fn`
-  （`Fn(Int)->Int ! e` のような細分や効果変数は未対応）なので、**効果多相は gradual 近似**です。
+- 代数的効果ハンドラは **multi-shot 完全対応**（CPS 評価器）。精密な関数型 `Fn(T)->T ! e` と
+  **効果変数多相**に対応（呼び出し時に効果変数を具体化）。ただし関数引数の型の構造的検査は gradual
+  （引数/戻り型は厳密照合せず）、効果変数の具体化は1段、`!` 省略関数の効果推論は効果変数を代入しません。
 - 型エイリアスは「裸の名前」のみ（`Nat{...}` のような追加精緻化や、エイリアスのジェネリクスは未対応）。
 - 所有権は単純な linear-use 解析（直線コード＋`if`/`match`）。リージョン/ライフタイム推論なし。
 - 基本型は `Int`/`Bool`/`Unit`/`Array`（要素 Int）/`Fn`/`Str` ＋ユーザー定義 `enum`。ジェネリクス・

@@ -1,0 +1,16 @@
+# ── #4 algebraic effects: a performed operation that escapes its type ─────
+# `risky` performs the `Choose` operation but its signature declares only `! {IO}`.
+# Because the effect row is written explicitly, the un-handled, un-declared `Choose`
+# leaks -- reported as the same effect dialogue as any other effect. (Handling it
+# with `handle ... with { Choose(x, k) => ... }` would discharge it; see
+# samples/multishot.pvo.)
+
+fn risky() -> Int ! {IO} {
+  let r = perform Choose(0);
+  print(r);
+  r
+}
+
+fn main() -> Int ! {IO} {
+  risky()
+}

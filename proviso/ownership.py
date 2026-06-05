@@ -104,6 +104,16 @@ class OwnershipChecker:
                         merged.setdefault(k, v)
             if merged is not None:
                 self.moved = merged
+        elif isinstance(e, N.Perform):
+            self._expr(e.arg)
+        elif isinstance(e, N.HandleWith):
+            self._block(e.body)
+            for c in e.clauses:
+                self._expr(c.body)
+            if e.ret is not None:
+                self._expr(e.ret.body)
+        elif isinstance(e, N.Lambda):
+            self._block(e.body)
         # literals: nothing
 
     # --- the rule --------------------------------------------------------- #

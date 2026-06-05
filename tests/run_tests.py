@@ -235,6 +235,38 @@ _mism = ("enum Shape { Circle(Int) }\nfn f(s: Shape) -> Int { 0 }\n"
 d, _ = analyze_src(_mism)
 check("passing Int where enum expected -> type error", codes(d) == ["type"], codes(d))
 
+# --- #4: first-class functions + multi-shot effect handlers ----------------- #
+print("#4 first-class functions + multi-shot handlers:")
+_ms = open(os.path.join(SAMPLES, "multishot.pvo"), encoding="utf-8-sig").read()
+d, w = analyze_src(_ms)
+check("multishot sample checks clean (effect discharged)", d == [], codes(d))
+r, o = run_src(_ms)
+check("multi-shot: handler resumes twice -> 40", r == 40 and o == ["40"], (r, o))
+
+# resuming twice over `x + 1`: k(0)+k(100) = 1 + 101 = 102
+_ms2 = ("fn main() -> Int {\n"
+        "  handle { perform Flip(0) + 1 } with { Flip(x, k) => k(0) + k(100), return(v) => v }\n"
+        "}\n")
+r, _ = run_src(_ms2)
+check("multi-shot value: k(0)+k(100) over x+1 = 102", r == 102, r)
+
+_hof = open(os.path.join(SAMPLES, "hof.pvo"), encoding="utf-8-sig").read()
+d, w = analyze_src(_hof)
+check("hof sample checks clean", d == [], codes(d))
+r, o = run_src(_hof)
+check("hof: twice(g,1) = 100, prints 300", r == 100 and o == ["300"], (r, o))
+
+# single-shot resume (exception-like): handler ignores k, returns a default
+_once = ("fn main() -> Int {\n"
+         "  handle { let x = perform Fail(0); x + 1 } with { Fail(e, k) => 0 - 1, return(v) => v }\n"
+         "}\n")
+r, _ = run_src(_once)
+check("handler may ignore k (0-resumption) -> -1", r == -1, r)
+
+# a performed-but-undeclared/unhandled effect leaks (explicit `!` row)
+d, _ = analyze_src(open(os.path.join(EX, "09_effect_leak.pvo"), encoding="utf-8-sig").read())
+check("performed effect that escapes -> effect-leak", codes(d) == ["effect-leak"], codes(d))
+
 print()
 print(f"{_passed} passed, {_failed} failed")
 sys.exit(1 if _failed else 0)

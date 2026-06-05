@@ -164,6 +164,17 @@ class Checker:
             for arm in e.arms:
                 s |= self._collect_effects(arm.body, est)
             return s
+        if isinstance(e, N.Perform):
+            return self._collect_effects(e.arg, est) | {e.op}
+        if isinstance(e, N.HandleWith):
+            handled = {c.op for c in e.clauses}
+            s = self._collect_effects(e.body, est) - handled
+            for c in e.clauses:
+                s |= self._collect_effects(c.body, est)
+            if e.ret is not None:
+                s |= self._collect_effects(e.ret.body, est)
+            return s
+        # a lambda's body effects are latent (they occur when it is called)
         return set()
 
     def lookup(self, name: str) -> Optional[FnType]:
@@ -196,6 +207,8 @@ class Checker:
             return T.INT(te.refine.pred, te.refine.var)
         if te.name == "Array":
             return T.ARRAY
+        if te.name == "Fn":
+            return T.FUNC
         if te.name in self.enums:
             return T.DataType(te.name)
         # Unknown base type name; treat as opaque gradual Int-ish for v1.
@@ -271,7 +284,41 @@ class Checker:
             return self._infer_index(e, env)
         if isinstance(e, N.Match):
             return self._infer_match(e, env)
+        if isinstance(e, N.Lambda):
+            # a function value; its body's effects happen when called, not here
+            return T.FUNC, {}
+        if isinstance(e, N.Perform):
+            _at, ae = self._infer(e.arg, env)
+            # the value a `perform` yields is whatever the handler resumes with: gradual
+            return T.INT(), {**ae, e.op: e.line}
+        if isinstance(e, N.HandleWith):
+            return self._infer_handle_with(e, env)
         raise TypeError(f"cannot infer {e!r}")
+
+    def _infer_handle_with(self, e: N.HandleWith, env: Env) -> Tuple[T.Type, Dict[str, int]]:
+        bt, be = self._infer(e.body, env)
+        handled = {c.op for c in e.clauses}
+        eff = {k: v for k, v in be.items() if k not in handled}  # discharge handled ops
+        results = []
+        for c in e.clauses:
+            cenv = dict(env)
+            cenv[c.param] = T.INT()    # operation argument (gradual)
+            cenv[c.kbinder] = T.FUNC   # the multi-shot resumption, a first-class function
+            ct, ce = self._infer(c.body, cenv)
+            eff.update(ce)
+            results.append(ct)
+        if e.ret is not None:
+            renv = dict(env)
+            renv[e.ret.binder] = bt
+            rt, re = self._infer(e.ret.body, renv)
+            eff.update(re)
+            results.append(rt)
+        else:
+            results.append(bt)
+        result = results[0]
+        for r in results[1:]:
+            result = self._join(result, r)
+        return result, eff
 
     def _infer_match(self, e: N.Match, env: Env) -> Tuple[T.Type, Dict[str, int]]:
         st, eff = self._infer(e.scrutinee, env)
@@ -399,8 +446,18 @@ class Checker:
         return None
 
     def _infer_call(self, e: N.Call, env: Env) -> Tuple[T.Type, Dict[str, int]]:
+        # calling a first-class function value (a `Fn`-typed binding, incl. a captured
+        # resumption `k`). We don't know its result/effects statically -> gradual, and
+        # its effects are *polymorphic*: they ride with the value, not this call site.
+        callee_ty = env.get(e.fn)
+        if isinstance(callee_ty, BaseType) and callee_ty.name == "Fn":
+            eff: Dict[str, int] = {}
+            for a in e.args:
+                _at, ae = self._infer(a, env)
+                eff.update(ae)
+            return T.INT(), eff
         sig = self.lookup(e.fn)
-        eff: Dict[str, int] = {}
+        eff = {}
         if sig is None:
             self.diags.append(Diagnostic(
                 code="unbound", title=f"unknown function `{e.fn}`",

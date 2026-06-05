@@ -86,6 +86,7 @@ def INT(pred: Optional[Pred] = None, var: str = "v") -> BaseType:
 BOOL = BaseType("Bool", Refinement.gradual("b"))
 UNIT = BaseType("Unit", Refinement.gradual("u"))
 ARRAY = BaseType("Array", Refinement.gradual("a"))  # array of Int (monomorphic in v0.1)
+FUNC = BaseType("Fn", Refinement.gradual("f"))      # first-class function value (gradual)
 
 
 @dataclass

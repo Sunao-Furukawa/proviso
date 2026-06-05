@@ -172,6 +172,48 @@ class Handle(Expr):
 
 
 @dataclass
+class Lambda(Expr):
+    """An anonymous first-class function value: fn(params) -> ret { body }."""
+    params: List[Param]
+    ret: Optional[TypeExpr]
+    body: "Block"
+    line: int = 0
+
+
+@dataclass
+class Perform(Expr):
+    """perform Op(arg) -- invoke an algebraic effect operation."""
+    op: str
+    arg: Expr
+    line: int = 0
+
+
+@dataclass
+class OpClause:
+    op: str          # operation name handled
+    param: str       # binds the operation's argument
+    kbinder: str     # binds the (multi-shot) resumption continuation
+    body: "Expr"
+    line: int = 0
+
+
+@dataclass
+class RetClause:
+    binder: str
+    body: "Expr"
+    line: int = 0
+
+
+@dataclass
+class HandleWith(Expr):
+    """handle <body> with { Op(x, k) => ..., return(v) => ... } -- algebraic effects."""
+    body: "Block"
+    clauses: List[OpClause]
+    ret: Optional[RetClause] = None
+    line: int = 0
+
+
+@dataclass
 class MatchArm:
     ctor: Optional[str]            # constructor name, or None for the `_` wildcard
     binders: List[str]             # field binders for the constructor's fields

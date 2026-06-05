@@ -1,0 +1,20 @@
+# Multi-shot algebraic effects (#4). The handler resumes the `Choose` operation
+# TWICE (`k(0) + k(10)`), so the continuation after each `perform` runs once per
+# resumption. `k` is a first-class, *multi-shot* continuation.
+#
+# The body is `a + b`, with each of a, b drawn from {0, 10} via Choose. Resuming
+# twice at each of the two perform sites enumerates {0,10} x {0,10} and sums them:
+#   (0+0) + (0+10) + (10+0) + (10+10) = 40.
+
+fn main() -> Int ! {IO} {
+  let total = handle {
+    let a = perform Choose(0);
+    let b = perform Choose(0);
+    a + b
+  } with {
+    Choose(x, k) => k(0) + k(10),
+    return(v) => v
+  };
+  print(total);    # 40
+  total
+}

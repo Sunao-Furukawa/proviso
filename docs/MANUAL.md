@@ -106,6 +106,7 @@ fn main() -> Int ! {IO} {
 | `Bool` | 真偽値 | 付けられない（常に gradual） |
 | `Unit` | 値なし。ブロックが末尾式を持たないときの値。表示は `()` | － |
 | `Array` | 整数の配列（v0.1 は要素 Int 固定）。リテラル `[1, 2, 3]`、長さ `len(a)`、添字 `a[i]` | － |
+| `Fn` | 第一級関数値（ラムダや捕捉した継続）。v0.1 では引数/効果を細分しない gradual な関数型 | － |
 
 - **`Int`**（精緻化なし）は内部的に「未知の述語 `?`」を持つ**漸進的（gradual）**な型です。あらゆる要求と
   両立し、必要なら実行時チェックに先送りされます（§12）。
@@ -226,6 +227,22 @@ fn greet(msg: Int) -> Int ! {IO} {
   `f(args)`。
 - 関数本体の最後の式が**戻り値**になります（§8）。`return` 文はありません。
 
+### 第一級関数（ラムダ）
+
+関数は値です。**ラムダ** `fn(引数...) -> 戻り型 { 本体 }` を式として書け、変数に束縛・他の関数へ渡せます。
+関数型の引数は `Fn`（gradual な関数型）で受けます。
+
+```proviso
+fn twice(f: Fn, x: Int) -> Int { f(f(x)) }
+
+fn main() -> Int ! {IO} {
+  let g = fn(n: Int) -> Int { n * 10 };
+  print(twice(g, 3))    # g(g(3)) = 300
+}
+```
+
+`Fn` 値の呼び出しは結果・効果ともに gradual に扱われます（効果多相の簡易版）。
+
 ---
 
 ## 8. 式と文
@@ -314,6 +331,33 @@ fn job()  -> Int ! {IO, Net} { ... }   # 複数
 > **依存型との統合**: `http_get` の「リトライは最大3回」という安全性は、効果 `Net` に乗せつつ、
 > その**引数の精緻化** `retries: Int{r | r >= 0 && r <= 3}` として表現されます。つまり効果の安全条件が、
 > `n > 0` などと**同じソルバ**で検査されます。
+
+### 代数的効果と multi-shot ハンドラ
+
+任意の演算を `perform Op(引数)` で発生させ、`handle <body> with { ... }` で処理します。演算名
+（`Op`）はそのまま効果ラベルになり、`perform Op` は効果 `Op` を持ちます。`handle...with` は処理した
+演算を本体の効果から**取り除き**ます。
+
+```proviso
+fn main() -> Int ! {IO} {
+  let total = handle {
+    let a = perform Choose(0);
+    let b = perform Choose(0);
+    a + b
+  } with {
+    Choose(x, k) => k(0) + k(10),   # k は捕捉した継続。複数回呼べる = multi-shot
+    return(v) => v
+  };
+  print(total);    # 40 （{0,10}×{0,10} の総和）
+  total
+}
+```
+
+- ハンドラ節 `Op(x, k) => ...`: `x` は演算の引数、`k` は **multi-shot な継続**（第一級の `Fn` 値）。
+  `k(v)` は「`perform` の続き」をハンドラ境界まで実行し、その結果値を返します。**`k` は何度でも呼べ**、
+  各回が独立に走ります（`k(0) + k(10)` は2回 resume）。0回呼べば例外的な打ち切り、1回なら通常の継続。
+- `return(v) => ...`: 本体が正常終了したときの値 `v` を変換します（省略時は恒等）。
+- 実装は継続渡し（CPS）評価器で、これにより**完全な multi-shot** を実現しています。
 
 ---
 
@@ -486,9 +530,12 @@ stmt      := 'let' 'linear'? IDENT (':' type)? '=' expr ';'
 
 expr      := if | handle | match | logic_or
 if        := 'if' expr block ('else' (if | block))?
-handle    := 'handle' block 'catch' '(' IDENT ')' block
+handle    := 'handle' block ('catch' '(' IDENT ')' block | 'with' '{' wclause (',' wclause)* ','? '}')
+wclause   := IDENT '(' IDENT ',' IDENT ')' '=>' expr   |   'return' '(' IDENT ')' '=>' expr
 match     := 'match' expr '{' arm (',' arm)* ','? '}'
 arm       := (IDENT ('(' IDENT (',' IDENT)* ')')? | '_') '=>' expr
+# primaries also include:  lambda := 'fn' '(' params? ')' ('->' type)? block
+#                          perform := 'perform' IDENT '(' expr ')'
 logic_or  := logic_and ('||' logic_and)*
 logic_and := comparison ('&&' comparison)*
 comparison:= additive (CMP additive)?               # 連鎖なし
@@ -521,16 +568,17 @@ v0.1 で**意図的に未対応**の事項（いずれも既知の拡張で、�
   返すインターフェイスはバックエンド非依存に設計されています。
 - **依存精緻化**は動くが、measure は `len` のみ。配列の長さは静的に追跡しないので、`let` 束縛した配列への
   リテラル添字は（証明されず）実行時チェックになります。`len(x)` ガードの occurrence typing も未対応。
-- 効果は名前のラベル（＋オプションの精緻化パラメータ）。`!` 省略時は推論されるが、完全に再開可能
-  （multi-shot）な効果ハンドラは `Exc`（例外）のみモデル化。効果多相（効果変数）も未対応。
+- 代数的効果ハンドラは **multi-shot 完全対応**（CPS 評価器）。ただし第一級関数型は gradual な `Fn`
+  （`Fn(Int)->Int ! e` のような細分や効果変数は未対応）なので、**効果多相は gradual 近似**です。
 - 型エイリアスは「裸の名前」のみ（`Nat{...}` のような追加精緻化や、エイリアスのジェネリクスは未対応）。
-- 所有権は単純な linear-use 解析（直線コード＋`if`）。リージョン/ライフタイム推論なし。
-- 基本型は `Int`/`Bool`/`Unit`/`Array`（要素 Int）＋ユーザー定義 `enum`。ジェネリクス・文字列・
+- 所有権は単純な linear-use 解析（直線コード＋`if`/`match`）。リージョン/ライフタイム推論なし。
+- 基本型は `Int`/`Bool`/`Unit`/`Array`（要素 Int）/`Fn` ＋ユーザー定義 `enum`。ジェネリクス・文字列・
   浮動小数点なし。`enum` のパターンは1段（ネスト不可）、コンストラクタフィールドの実行時契約は未強制。
-- 第一級関数・クロージャ・ラムダなし。呼び出しは名前付き関数／コンストラクタのみ。
+- 評価器は CPS のため Python フレームを深く積みます。非常に深い再帰は（引き上げた）再帰上限に当たり得ます。
 - `return` 文なし（ブロック末尾式が値）。
 
-> 残りの要望: **#4** 第一級関数＋**multi-shot** 効果ハンドラ＋効果多相（最難関）。未実装です。
+> #1-#7 はすべて実装済み（テスト48件）。次の候補: `Fn(T)->T ! e` の精密な関数型＋効果変数多相、
+> measure 追加、配列長の静的追跡、ネストパターン、文字列、深い再帰向けのトランポリン化。
 
 ---
 

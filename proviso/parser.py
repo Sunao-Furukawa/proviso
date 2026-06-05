@@ -304,6 +304,29 @@ class Parser:
             return self.parse_match()
         return self._logic_or()
 
+    def parse_lambda(self) -> N.Lambda:
+        kw = self.eat("kw", "fn")
+        self.eat("sym", "(")
+        params = []
+        if not self.at("sym", ")"):
+            params.append(self.parse_param())
+            while self.accept("sym", ","):
+                params.append(self.parse_param())
+        self.eat("sym", ")")
+        ret = None
+        if self.accept("sym", "->"):
+            ret = self.parse_type()
+        body = self.parse_block()
+        return N.Lambda(params, ret, body, kw.line)
+
+    def parse_perform(self) -> N.Perform:
+        kw = self.eat("kw", "perform")
+        op = self.eat("ident").value
+        self.eat("sym", "(")
+        arg = self.parse_expr()
+        self.eat("sym", ")")
+        return N.Perform(op, arg, kw.line)
+
     def parse_match(self) -> N.Match:
         kw = self.eat("kw", "match")
         scrutinee = self.parse_expr()
@@ -341,15 +364,45 @@ class Parser:
                 els = N.Block([], els, els.line)
         return N.If(cond, then, els, kw.line)
 
-    def parse_handle(self) -> N.Handle:
+    def parse_handle(self):
         kw = self.eat("kw", "handle")
         body = self.parse_block()
+        if self.accept("kw", "with"):
+            return self.parse_handle_with(body, kw.line)
         self.eat("kw", "catch")
         self.eat("sym", "(")
         binder = self.eat("ident").value
         self.eat("sym", ")")
         handler = self.parse_block()
         return N.Handle(body, binder, handler, kw.line)
+
+    def parse_handle_with(self, body, line) -> N.HandleWith:
+        self.eat("sym", "{")
+        clauses = []
+        ret = None
+        while not self.at("sym", "}"):
+            if self.at("kw", "return"):
+                rkw = self.eat("kw", "return")
+                self.eat("sym", "(")
+                binder = self.eat("ident").value
+                self.eat("sym", ")")
+                self.eat("sym", "=>")
+                rbody = self.parse_expr()
+                ret = N.RetClause(binder, rbody, rkw.line)
+            else:
+                t = self.eat("ident")
+                self.eat("sym", "(")
+                param = self.eat("ident").value
+                self.eat("sym", ",")
+                kbinder = self.eat("ident").value
+                self.eat("sym", ")")
+                self.eat("sym", "=>")
+                cbody = self.parse_expr()
+                clauses.append(N.OpClause(t.value, param, kbinder, cbody, t.line))
+            if not self.accept("sym", ","):
+                break
+        self.eat("sym", "}")
+        return N.HandleWith(body, clauses, ret, line)
 
     def _logic_or(self) -> N.Expr:
         left = self._logic_and()
@@ -418,6 +471,10 @@ class Parser:
 
     def _primary(self) -> N.Expr:
         t = self.cur
+        if self.at("kw", "perform"):
+            return self.parse_perform()
+        if self.at("kw", "fn"):
+            return self.parse_lambda()
         if t.kind == "int":
             self.eat("int")
             return N.IntLit(int(t.value), t.line)

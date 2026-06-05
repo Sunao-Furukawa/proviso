@@ -1,0 +1,12 @@
+# First-class functions (#4): lambdas are values, passed into other functions.
+# `twice` takes a function `f: Fn` and applies it twice. `g` is an anonymous lambda.
+
+fn twice(f: Fn, x: Int) -> Int {
+  f(f(x))
+}
+
+fn main() -> Int ! {IO} {
+  let g = fn(n: Int) -> Int { n * 10 };
+  print(twice(g, 3));   # g(g(3)) = 300
+  twice(g, 1)           # returns g(g(1)) = 100
+}

@@ -5,7 +5,7 @@
 
 Proviso is a working prototype of the design you sketched: a small language built around
 "correctness you can pay for in stages." It is a real lexer → parser → gradual dependent
-type & effect checker → tree-walking interpreter, plus the part that matters most — a
+type & effect checker → CPS interpreter (multi-shot effect handlers), plus the part that matters most — a
 diagnostics layer that turns every conflict into a **counterexample and two choices**.
 
 This is a *prototype*, not the final research language. It deliberately implements a
@@ -141,7 +141,12 @@ not an oversight):
   statically, and there's no `len`-guard occurrence typing yet.
 - **User-defined types** — `enum`s with constructors and `match` (single-variant = record),
   with exhaustiveness reported as a dialogue. Patterns are one level deep; no nested
-  patterns or field access yet. First-class functions / effect handlers (#4) are next.
+  patterns or field access yet.
+- **First-class functions** (lambdas, `Fn`-typed params) and **algebraic effects** —
+  `perform Op(x)` + `handle … with { Op(x, k) => …, return(v) => … }`, on a CPS evaluator
+  so the resumption `k` is **fully multi-shot** (`k(0) + k(10)` resumes twice). Operation
+  names are effect labels; handling discharges them. First-class function types are gradual
+  (`Fn`), so effect polymorphism is gradual; precise `Fn(T)->T ! e` types are future work.
 - **Effects** are labels with optional refinement parameters; first-class, fully resumable
   effect handlers (multi-shot continuations) are modeled only for `Exc` here.
 - **Ownership** uses a simple "any use moves; borrow/clone read" model over straight-line

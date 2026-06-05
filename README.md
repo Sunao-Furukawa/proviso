@@ -133,11 +133,12 @@ What is deliberately **bounded** in this prototype (each is a known, non-trivial
 not an oversight):
 
 - The refinement solver is **Z3 when available, else a sampler** that is complete for the
-  single-variable comparison fragment but is not a general decision procedure. Either way,
-  **surface refinements still range over a single bound variable** vs. integer constants;
-  full Π-types / cross-argument dependency (`b: Int{m | m < a}`) and measure-referencing
-  predicates (`len(xs)`) are the natural next step. The `implies`-returns-counterexample
-  interface is backend-agnostic by design.
+  single-variable comparison fragment but is not a general decision procedure.
+- **Dependent refinements** (`hi: Int{h | h >= lo}`, `i: Int{k | k < len(xs)}`) and **arrays**
+  (`[1,2,3]`, `len`, `a[i]`) are real: call sites discharge obligations via Z3 — proven →
+  no runtime check; provably impossible → hard error with a counterexample; otherwise →
+  gradual runtime check. But the only measure is `len`, array length isn't tracked
+  statically, and there's no `len`-guard occurrence typing yet.
 - **Effects** are labels with optional refinement parameters; first-class, fully resumable
   effect handlers (multi-shot continuations) are modeled only for `Exc` here.
 - **Ownership** uses a simple "any use moves; borrow/clone read" model over straight-line

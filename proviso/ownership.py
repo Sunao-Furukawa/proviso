@@ -84,6 +84,12 @@ class OwnershipChecker:
         elif isinstance(e, N.Handle):
             self._block(e.body)
             self._block(e.handler)
+        elif isinstance(e, N.ArrayLit):
+            for el in e.elements:
+                self._expr(el)
+        elif isinstance(e, N.Index):
+            self._expr(e.arr)
+            self._expr(e.idx)
         # literals: nothing
 
     # --- the rule --------------------------------------------------------- #

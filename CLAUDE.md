@@ -64,13 +64,26 @@ to runtime checks instead. Source files use the `.pvo` extension.
 - **#3 effect inference**: a function that omits its `!` row has effects inferred from its
   body (fixpoint; mutual recursion ok) and exported to callers — no leak. Writing `! {...}`
   (incl. `! {}`) is still an enforced contract. See `samples/infer_effects.pvo`.
+- **#5 dependent refinements**: refinement predicates may mention other in-scope variables
+  and the `len(x)` measure (`hi: Int{h | h >= lo}`, `i: Int{k | k < len(xs)}`). Predicate
+  terms live in `predicate.py` (TVal/TInt/TVar/TLen/TArith, PRel). Call sites substitute
+  formal→actual terms and discharge via `z3_discharge`/`z3_consistent`: proven → no runtime
+  check; provably impossible → hard `refine-conflict`/`bounds` error with a counterexample;
+  otherwise → gradual runtime check. Runtime contracts evaluate the predicate with the full
+  arg environment. See `examples/07_dependent.pvo`.
+- **#7 arrays**: `Array` (of Int), literals `[1, 2, 3]`, `len(a)`, indexing `a[i]` with the
+  `0 <= i < len(a)` obligation handled by #5 (proven / runtime-checked / hard error). See
+  `samples/arrays.pvo`.
 
 ## Bounded scope (deliberate, documented in README.md)
 
-Surface refinements still range over a single bound variable × integer constants (no full
-Π-types / cross-argument dependency / measures yet, even though Z3 could decide them);
-`Exc`-only resumable handlers; no effect polymorphism; simple linear-use ownership; only
-`Int`/`Bool`/`Unit`; aliases are bare names only.
+Dependent refinements work but the only measure is `len`; array *length* is not tracked
+statically (so a literal index on a `let`-bound array is runtime-checked, not proven);
+no occurrence typing on `len(x)` guards yet. `Exc`-only resumable handlers; no effect
+polymorphism; no first-class functions; simple linear-use ownership; base types are
+`Int`/`Bool`/`Unit`/`Array(Int)`; aliases are bare names only.
 
-Natural next steps: cross-argument dependent refinements + measures; multi-shot effect
-handlers + effect variables; user-defined types; strings.
+Remaining requested work: **#6** user-defined types (records/sum) + pattern matching;
+**#4** first-class functions + multi-shot effect handlers + effect polymorphism (the
+largest). Other next steps: more measures; static array-length tracking; len-guard
+occurrence typing; strings.

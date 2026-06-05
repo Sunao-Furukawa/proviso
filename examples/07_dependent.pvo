@@ -1,0 +1,14 @@
+# ── #5 dependent refinements: the requirement mentions OTHER arguments ───
+# `hi` must be >= `lo`; `x` must lie in [lo, hi]. These are true dependent types:
+# one argument's refinement refers to another. The call below supplies hi = 5
+# (< lo = 10) and x = 7 (outside [10, 5]), so the SMT backend instantiates each
+# requirement and reports the concrete failing fact -- still as a dialogue with
+# two choices.
+
+fn between(lo: Int, hi: Int{h | h >= lo}, x: Int{v | v >= lo && v <= hi}) -> Int {
+  x
+}
+
+fn main() -> Int {
+  between(10, 5, 7)
+}

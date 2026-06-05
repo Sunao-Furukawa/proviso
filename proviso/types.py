@@ -85,6 +85,7 @@ def INT(pred: Optional[Pred] = None, var: str = "v") -> BaseType:
 
 BOOL = BaseType("Bool", Refinement.gradual("b"))
 UNIT = BaseType("Unit", Refinement.gradual("u"))
+ARRAY = BaseType("Array", Refinement.gradual("a"))  # array of Int (monomorphic in v0.1)
 
 
 def effects_str(effects: List[Effect]) -> str:

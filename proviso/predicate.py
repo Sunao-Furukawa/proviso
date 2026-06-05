@@ -101,6 +101,96 @@ class PNot(Pred):
         return f"!({self.a})"
 
 
+# --------------------------------------------------------------------------- #
+# Terms -- the building blocks of *dependent* refinements (#5).  A refinement may
+# now relate the value to other in-scope variables and to the `len(x)` measure,
+# e.g.  Int{k | k >= 0 && k < len(xs)}  or  Int{h | h >= lo}.
+# --------------------------------------------------------------------------- #
+class Term:
+    pass
+
+
+@dataclass(frozen=True)
+class TVal(Term):
+    def __str__(self) -> str:
+        return "value"
+
+
+@dataclass(frozen=True)
+class TInt(Term):
+    k: int
+
+    def __str__(self) -> str:
+        return str(self.k)
+
+
+@dataclass(frozen=True)
+class TVar(Term):
+    name: str
+
+    def __str__(self) -> str:
+        return self.name
+
+
+@dataclass(frozen=True)
+class TLen(Term):
+    name: str
+
+    def __str__(self) -> str:
+        return f"len({self.name})"
+
+
+@dataclass(frozen=True)
+class TArith(Term):
+    op: str  # + - *
+    a: Term
+    b: Term
+
+    def __str__(self) -> str:
+        return f"({self.a} {self.op} {self.b})"
+
+
+@dataclass(frozen=True)
+class PRel(Pred):
+    """A comparison between two terms (the general, possibly-dependent atom)."""
+    op: str
+    lhs: Term
+    rhs: Term
+
+    def __str__(self) -> str:
+        return f"{self.lhs} {self.op} {self.rhs}"
+
+
+def is_dependent(p: Pred) -> bool:
+    """True if the predicate mentions any variable other than the bound value."""
+    return bool(free_names(p))
+
+
+def free_names(p: Pred) -> set:
+    out: set = set()
+    _free_names(p, out)
+    return out
+
+
+def _free_names(p: Pred, out: set) -> None:
+    if isinstance(p, PRel):
+        _term_names(p.lhs, out)
+        _term_names(p.rhs, out)
+    elif isinstance(p, (PAnd, POr)):
+        _free_names(p.a, out)
+        _free_names(p.b, out)
+    elif isinstance(p, PNot):
+        _free_names(p.a, out)
+
+
+def _term_names(t: Term, out: set) -> None:
+    if isinstance(t, (TVar, TLen)):
+        out.add(t.name)
+    elif isinstance(t, TArith):
+        _term_names(t.a, out)
+        _term_names(t.b, out)
+
+
 def render(pred: Pred, var: str) -> str:
     """Pretty-print a predicate using the bound variable's display name."""
     return str(pred).replace("value", var)
@@ -119,20 +209,119 @@ _CMP = {
 }
 
 
-def eval_pred(p: Pred, x: int) -> bool:
+def eval_term(t: Term, x: int, env: dict) -> int:
+    if isinstance(t, TVal):
+        return x
+    if isinstance(t, TInt):
+        return t.k
+    if isinstance(t, TVar):
+        return int(env[t.name])
+    if isinstance(t, TLen):
+        return len(env[t.name])
+    if isinstance(t, TArith):
+        a, b = eval_term(t.a, x, env), eval_term(t.b, x, env)
+        return {"+": a + b, "-": a - b, "*": a * b}[t.op]
+    raise TypeError(f"unknown term node: {t!r}")
+
+
+def eval_pred(p: Pred, x: int, env: dict = None) -> bool:
     if isinstance(p, PTrue):
         return True
     if isinstance(p, PFalse):
         return False
     if isinstance(p, PCmp):
         return _CMP[p.op](x, p.const)
+    if isinstance(p, PRel):
+        env = env or {}
+        return _CMP[p.op](eval_term(p.lhs, x, env), eval_term(p.rhs, x, env))
     if isinstance(p, PAnd):
-        return eval_pred(p.a, x) and eval_pred(p.b, x)
+        return eval_pred(p.a, x, env) and eval_pred(p.b, x, env)
     if isinstance(p, POr):
-        return eval_pred(p.a, x) or eval_pred(p.b, x)
+        return eval_pred(p.a, x, env) or eval_pred(p.b, x, env)
     if isinstance(p, PNot):
-        return not eval_pred(p.a, x)
+        return not eval_pred(p.a, x, env)
     raise TypeError(f"unknown predicate node: {p!r}")
+
+
+# --- substitution / renaming (used to instantiate dependent refinements) ----- #
+def subst_value(p: Pred, term: Term) -> Pred:
+    """Replace the bound value (TVal / the implicit value of PCmp) with `term`."""
+    if isinstance(p, PCmp):
+        return PRel(p.op, term, TInt(p.const))
+    if isinstance(p, PRel):
+        return PRel(p.op, _subst_value_t(p.lhs, term), _subst_value_t(p.rhs, term))
+    if isinstance(p, PAnd):
+        return PAnd(subst_value(p.a, term), subst_value(p.b, term))
+    if isinstance(p, POr):
+        return POr(subst_value(p.a, term), subst_value(p.b, term))
+    if isinstance(p, PNot):
+        return PNot(subst_value(p.a, term))
+    return p
+
+
+def _subst_value_t(t: Term, term: Term) -> Term:
+    if isinstance(t, TVal):
+        return term
+    if isinstance(t, TArith):
+        return TArith(t.op, _subst_value_t(t.a, term), _subst_value_t(t.b, term))
+    return t
+
+
+def rename(p: Pred, mapping: dict) -> Pred:
+    """Rename free variable names (formal params -> actual argument names)."""
+    if isinstance(p, PCmp):
+        return p
+    if isinstance(p, PRel):
+        return PRel(p.op, _rename_t(p.lhs, mapping), _rename_t(p.rhs, mapping))
+    if isinstance(p, PAnd):
+        return PAnd(rename(p.a, mapping), rename(p.b, mapping))
+    if isinstance(p, POr):
+        return POr(rename(p.a, mapping), rename(p.b, mapping))
+    if isinstance(p, PNot):
+        return PNot(rename(p.a, mapping))
+    return p
+
+
+def _rename_t(t: Term, mapping: dict) -> Term:
+    if isinstance(t, TVar):
+        return TVar(mapping.get(t.name, t.name))
+    if isinstance(t, TLen):
+        return TLen(mapping.get(t.name, t.name))
+    if isinstance(t, TArith):
+        return TArith(t.op, _rename_t(t.a, mapping), _rename_t(t.b, mapping))
+    return t
+
+
+def subst_names(p: Pred, term_map: dict) -> Pred:
+    """Substitute free variable names with arbitrary terms (formal params -> actual args).
+
+    `term_map` maps a name to a Term. A bare variable use becomes that term; a `len(name)`
+    use resolves to `len(actual)` when the actual is itself a variable, else is left free.
+    """
+    if isinstance(p, PCmp):
+        return p
+    if isinstance(p, PRel):
+        return PRel(p.op, _subst_names_t(p.lhs, term_map), _subst_names_t(p.rhs, term_map))
+    if isinstance(p, PAnd):
+        return PAnd(subst_names(p.a, term_map), subst_names(p.b, term_map))
+    if isinstance(p, POr):
+        return POr(subst_names(p.a, term_map), subst_names(p.b, term_map))
+    if isinstance(p, PNot):
+        return PNot(subst_names(p.a, term_map))
+    return p
+
+
+def _subst_names_t(t: Term, term_map: dict) -> Term:
+    if isinstance(t, TVar):
+        return term_map.get(t.name, t)
+    if isinstance(t, TLen):
+        r = term_map.get(t.name)
+        if isinstance(r, TVar):
+            return TLen(r.name)
+        return t
+    if isinstance(t, TArith):
+        return TArith(t.op, _subst_names_t(t.a, term_map), _subst_names_t(t.b, term_map))
+    return t
 
 
 def _constants(p: Pred, out: Set[int]) -> None:
@@ -220,6 +409,136 @@ def _z3_witness(p: Pred) -> Optional[int]:
     if s.check() == _z3.sat:
         return _z3_model_value(s, v)
     return None
+
+
+class NotDecidable(Exception):
+    """Raised when no SMT backend is available to decide a dependent obligation."""
+
+
+def z3_discharge(assumptions: "list[Pred]", goal: Pred):
+    """Decide  (AND assumptions) => goal  for *closed* predicates (no bound value left).
+
+    Returns None when proven, or a dict {name: int} counterexample model when not.
+    Raises NotDecidable if Z3 is unavailable.
+    """
+    if not _HAVE_Z3:
+        raise NotDecidable()
+    cache: dict = {}
+
+    def zname(kind: str, nm: str):
+        key = (kind, nm)
+        if key not in cache:
+            cache[key] = _z3.Int(("len_" + nm) if kind == "len" else nm)
+        return cache[key]
+
+    def tz(t: Term):
+        if isinstance(t, TInt):
+            return t.k
+        if isinstance(t, TVal):
+            return zname("var", "value")
+        if isinstance(t, TVar):
+            return zname("var", t.name)
+        if isinstance(t, TLen):
+            return zname("len", t.name)
+        if isinstance(t, TArith):
+            a, b = tz(t.a), tz(t.b)
+            return {"+": a + b, "-": a - b, "*": a * b}[t.op]
+        raise TypeError(t)
+
+    def pz(p: Pred):
+        if isinstance(p, PTrue):
+            return _z3.BoolVal(True)
+        if isinstance(p, PFalse):
+            return _z3.BoolVal(False)
+        if isinstance(p, PCmp):
+            return _rel(zname("var", "value"), p.op, p.const)
+        if isinstance(p, PRel):
+            return _rel(tz(p.lhs), p.op, tz(p.rhs))
+        if isinstance(p, PAnd):
+            return _z3.And(pz(p.a), pz(p.b))
+        if isinstance(p, POr):
+            return _z3.Or(pz(p.a), pz(p.b))
+        if isinstance(p, PNot):
+            return _z3.Not(pz(p.a))
+        raise TypeError(p)
+
+    s = _z3.Solver()
+    facts = [pz(a) for a in assumptions]
+    neg_goal = _z3.Not(pz(goal))
+    # every `len` measure is non-negative
+    for (kind, nm), zv in list(cache.items()):
+        if kind == "len":
+            s.add(zv >= 0)
+    for f in facts:
+        s.add(f)
+    s.add(neg_goal)
+    if s.check() == _z3.sat:
+        m = s.model()
+        out = {}
+        for (kind, nm), zv in cache.items():
+            label = f"len({nm})" if kind == "len" else nm
+            val = m[zv]
+            out[label] = val.as_long() if val is not None else 0
+        return out
+    return None
+
+
+def _rel(a, op: str, b):
+    return {"<": a < b, "<=": a <= b, ">": a > b, ">=": a >= b,
+            "==": a == b, "!=": a != b}[op]
+
+
+def z3_consistent(preds: "list[Pred]") -> bool:
+    """True if all `preds` (closed) can hold simultaneously. Raises if no Z3."""
+    if not _HAVE_Z3:
+        raise NotDecidable()
+    cache: dict = {}
+
+    def zname(kind, nm):
+        key = (kind, nm)
+        if key not in cache:
+            cache[key] = _z3.Int(("len_" + nm) if kind == "len" else nm)
+        return cache[key]
+
+    def tz(t: Term):
+        if isinstance(t, TInt):
+            return t.k
+        if isinstance(t, TVal):
+            return zname("var", "value")
+        if isinstance(t, TVar):
+            return zname("var", t.name)
+        if isinstance(t, TLen):
+            return zname("len", t.name)
+        if isinstance(t, TArith):
+            a, b = tz(t.a), tz(t.b)
+            return {"+": a + b, "-": a - b, "*": a * b}[t.op]
+        raise TypeError(t)
+
+    def pz(p: Pred):
+        if isinstance(p, PTrue):
+            return _z3.BoolVal(True)
+        if isinstance(p, PFalse):
+            return _z3.BoolVal(False)
+        if isinstance(p, PCmp):
+            return _rel(zname("var", "value"), p.op, p.const)
+        if isinstance(p, PRel):
+            return _rel(tz(p.lhs), p.op, tz(p.rhs))
+        if isinstance(p, PAnd):
+            return _z3.And(pz(p.a), pz(p.b))
+        if isinstance(p, POr):
+            return _z3.Or(pz(p.a), pz(p.b))
+        if isinstance(p, PNot):
+            return _z3.Not(pz(p.a))
+        raise TypeError(p)
+
+    s = _z3.Solver()
+    body = [pz(p) for p in preds]
+    for (kind, nm), zv in list(cache.items()):
+        if kind == "len":
+            s.add(zv >= 0)
+    for b in body:
+        s.add(b)
+    return s.check() == _z3.sat
 
 
 # --- public dispatchers ------------------------------------------------------ #

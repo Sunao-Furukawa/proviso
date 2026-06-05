@@ -53,6 +53,9 @@ def builtin_signatures() -> Dict[str, FnType]:
         # pure identity functions over a value.
         "borrow": FnType([("x", T.INT(), False)], T.INT(), []),
         "clone": FnType([("x", T.INT(), False)], T.INT(), []),
+        # Array length -- a *measure*, proven non-negative. Refinements may mention
+        # `len(a)` (see dependent refinements), which is how bounds checks are stated.
+        "len": FnType([("a", T.ARRAY, False)], T.INT(P.PCmp(">=", 0)), []),
     }
 
 
@@ -137,6 +140,13 @@ class Checker:
         if isinstance(e, N.Handle):
             body = self._collect_effects(e.body, est) - {"Exc"}  # handle discharges Exc
             return body | self._collect_effects(e.handler, est)
+        if isinstance(e, N.ArrayLit):
+            s = set()
+            for el in e.elements:
+                s |= self._collect_effects(el, est)
+            return s
+        if isinstance(e, N.Index):
+            return self._collect_effects(e.arr, est) | self._collect_effects(e.idx, est)
         return set()
 
     def lookup(self, name: str) -> Optional[FnType]:
@@ -167,6 +177,8 @@ class Checker:
             if te.refine is None:
                 return T.INT()  # gradual
             return T.INT(te.refine.pred, te.refine.var)
+        if te.name == "Array":
+            return T.ARRAY
         # Unknown base type name; treat as opaque gradual Int-ish for v1.
         return BaseType(te.name, Refinement.gradual())
 
@@ -230,7 +242,31 @@ class Checker:
             return self._infer_handle(e, env)
         if isinstance(e, N.Block):
             return self._infer_block(e, env)
+        if isinstance(e, N.ArrayLit):
+            eff: Dict[str, int] = {}
+            for el in e.elements:
+                _, ee = self._infer(el, env)
+                eff.update(ee)
+            return T.ARRAY, eff
+        if isinstance(e, N.Index):
+            return self._infer_index(e, env)
         raise TypeError(f"cannot infer {e!r}")
+
+    def _infer_index(self, e: N.Index, env: Env) -> Tuple[T.Type, Dict[str, int]]:
+        at, ae = self._infer(e.arr, env)
+        it, ie = self._infer(e.idx, env)
+        eff = {**ae, **ie}
+        if not (isinstance(at, BaseType) and at.name == "Array"):
+            self.diags.append(Diagnostic(
+                code="type", title="indexing a non-array",
+                line=e.line, expected="Array", found=str(at),
+                why="the `[ ]` index operator applies to arrays only.",
+                source_line=self.src_line(e.line),
+            ))
+            return T.INT(), eff
+        # The bounds obligation 0 <= idx < len(arr) is a *dependent* refinement.
+        self._check_index_bounds(e, it, env)
+        return T.INT(), eff
 
     def _infer_binop(self, e: N.BinOp, env: Env) -> Tuple[T.Type, Dict[str, int]]:
         lt, le = self._infer(e.left, env)
@@ -286,13 +322,20 @@ class Checker:
                 source_line=self.src_line(e.line),
             ))
 
+        # formal-parameter -> actual-argument *term* map, used to instantiate
+        # dependent refinements like `i: Int{k | k < len(xs)}` or `hi: Int{h | h >= lo}`.
+        term_map = {}
+        for a, (pn, _t, _l) in zip(e.args, sig.params):
+            t = self._arg_term(a)
+            if t is not None:
+                term_map[pn] = t
         for arg, (pname, pty, _lin) in zip(e.args, sig.params):
             at, ae = self._infer(arg, env)
             eff.update(ae)
             # `print` is intentionally polymorphic over base types in v1.
             if e.fn == "print":
                 continue
-            self._check_arg(at, pty, arg, e.fn, pname)
+            self._check_arg(at, pty, arg, e.fn, pname, env, term_map)
 
         for ef in sig.effects:
             eff[ef.name] = e.line
@@ -359,7 +402,7 @@ class Checker:
             self._check_refine(src, dst, line, context, param_name=None, arg=None)
 
     def _check_arg(self, arg_ty: T.Type, param_ty: T.Type, arg: N.Expr,
-                   fn: str, pname: str) -> None:
+                   fn: str, pname: str, env: Env, term_map: dict) -> None:
         if isinstance(arg_ty, BaseType) and isinstance(param_ty, BaseType):
             if arg_ty.name != param_ty.name:
                 self.diags.append(Diagnostic(
@@ -371,14 +414,167 @@ class Checker:
                     source_line=self.src_line(arg.line),
                 ))
                 return
+            # dependent requirement (mentions other names / len) -> SMT-discharge it
+            if (param_ty.name == "Int" and not param_ty.refine.unknown
+                    and P.is_dependent(param_ty.refine.pred)):
+                self._check_dependent(arg_ty, param_ty, arg, env, term_map,
+                                      context=f"argument `{pname}` of `{fn}`",
+                                      pname=pname)
+                return
             self._check_refine(arg_ty, param_ty, arg.line,
                                context=f"argument `{pname}` of `{fn}`",
                                param_name=pname, arg=arg)
+
+    # --- dependent-refinement machinery (#5) ------------------------------ #
+    def _arg_term(self, e: N.Expr):
+        if isinstance(e, N.Var):
+            return P.TVar(e.name)
+        if isinstance(e, N.IntLit):
+            return P.TInt(e.value)
+        if isinstance(e, N.UnOp) and e.op == "-" and isinstance(e.operand, N.IntLit):
+            return P.TInt(-e.operand.value)
+        return None  # complex argument -> cannot name it symbolically
+
+    def _assumptions(self, env: Env) -> list:
+        """Everything currently known: each in-scope refined Int becomes a fact."""
+        out = []
+        for name, ty in env.items():
+            if isinstance(ty, BaseType) and ty.name == "Int" and not ty.refine.unknown:
+                out.append(P.subst_value(ty.refine.pred, P.TVar(name)))
+        return out
+
+    def _gradual(self, line: int, context: str, what: str) -> None:
+        self.warnings.append(Warning(
+            code="cast", line=line,
+            message=(f"{context} requires {what}, which cannot be proven statically here "
+                     f"-- inserting a runtime check (guard it, or refine the inputs to "
+                     f"prove it now)."),
+        ))
+
+    def _discharge(self, goal, assumptions, line, context, what, make_conflict) -> None:
+        """Proven -> ok; provably impossible -> hard error; otherwise -> runtime check."""
+        try:
+            model = P.z3_discharge(assumptions, goal)
+        except P.NotDecidable:
+            self._gradual(line, context, what)
+            return
+        if model is None:
+            return  # statically proven
+        try:
+            possible = P.z3_consistent(assumptions + [goal])
+        except P.NotDecidable:
+            possible = True
+        if possible:
+            self._gradual(line, context, what)  # might hold at runtime -> check there
+        else:
+            self.diags.append(make_conflict(model))
+
+    def _model_str(self, model: dict) -> str:
+        parts = [f"{k} = {v}" for k, v in sorted(model.items())]
+        return ", ".join(parts) if parts else "(some inputs)"
+
+    def _check_dependent(self, arg_ty: BaseType, param_ty: BaseType, arg: N.Expr,
+                         env: Env, term_map: dict, context: str, pname: str) -> None:
+        argterm = self._arg_term(arg)
+        req = P.render(param_ty.refine.pred, param_ty.refine.var)
+        if argterm is None:
+            self._gradual(arg.line, context, f"{{{param_ty.refine.var} | {req}}}")
+            return
+        goal = P.subst_value(P.subst_names(param_ty.refine.pred, term_map), argterm)
+        assumptions = self._assumptions(env)
+        if not arg_ty.refine.unknown:
+            assumptions.append(P.subst_value(arg_ty.refine.pred, argterm))
+
+        def make_conflict(model):
+            return Diagnostic(
+                code="refine-conflict",
+                title=f"{context} cannot be proven",
+                line=arg.line,
+                expected=str(param_ty),
+                found=str(arg_ty),
+                why=(f"the requirement ({req}) does not hold for the value supplied, "
+                     f"given what is known about the other inputs."),
+                counterexample=(f"fails when {self._model_str(model)}" if model
+                                else f"the instantiated requirement `{goal}` is false"),
+                choices=[
+                    Choice(
+                        label="LOOSEN the requirement",
+                        explanation=(f"Weaken `{pname}`'s refinement to admit this case "
+                                     f"(downstream code must then handle it)."),
+                        edit=f"relax the `{{{param_ty.refine.var} | {req}}}` on `{pname}`",
+                    ),
+                    Choice(
+                        label="STRENGTHEN the source",
+                        explanation=(f"Establish ({req}) before the call -- e.g. guard "
+                                     f"with `if {req} {{ ... }}` or refine the producer."),
+                        edit=f"if {req} {{ ... }}   -- inside, the call is proven safe",
+                    ),
+                ],
+                source_line=self.src_line(arg.line),
+                note="a dependent (paid-for) obligation, discharged by the SMT backend.",
+            )
+
+        self._discharge(goal, assumptions, arg.line, context,
+                        f"{{{param_ty.refine.var} | {req}}}", make_conflict)
+
+    def _check_index_bounds(self, e: N.Index, idx_ty: T.Type, env: Env) -> None:
+        if not isinstance(e.arr, N.Var):
+            self._gradual(e.line, "array index", "0 <= i < len(array)")
+            return
+        idxterm = self._arg_term(e.idx)
+        if idxterm is None:
+            self._gradual(e.line, "array index", "0 <= i < len(array)")
+            return
+        arrname = e.arr.name
+        goal = P.PAnd(P.PRel(">=", idxterm, P.TInt(0)),
+                      P.PRel("<", idxterm, P.TLen(arrname)))
+        assumptions = self._assumptions(env)
+        if isinstance(idx_ty, BaseType) and idx_ty.name == "Int" and not idx_ty.refine.unknown:
+            assumptions.append(P.subst_value(idx_ty.refine.pred, idxterm))
+
+        def make_conflict(model):
+            return Diagnostic(
+                code="bounds",
+                title=f"index may be out of bounds for `{arrname}`",
+                line=e.line,
+                expected=f"0 <= index < len({arrname})",
+                found="an index not provably in range",
+                why=(f"reading `{arrname}[i]` requires 0 <= i < len({arrname}); that does "
+                     f"not hold for all permitted inputs."),
+                counterexample=(f"out of bounds when {self._model_str(model)}" if model
+                                else f"the access `{goal}` cannot hold"),
+                choices=[
+                    Choice(
+                        label="GUARD the index",
+                        explanation="Check the bound before indexing; inside the guard "
+                                    "the access is proven safe.",
+                        edit=f"if i < len({arrname}) {{ {arrname}[i] }} else {{ ... }}",
+                    ),
+                    Choice(
+                        label="REFINE the index parameter",
+                        explanation="Demand the bound in the signature so callers must "
+                                    "prove it (dependent refinement).",
+                        edit=f"i: Int{{k | k >= 0 && k < len({arrname})}}",
+                    ),
+                ],
+                source_line=self.src_line(e.line),
+                note="bounds are a dependent refinement; proven safe accesses cost nothing "
+                     "at runtime, unproven ones are checked.",
+            )
+
+        self._discharge(goal, assumptions, e.line, "array index",
+                        f"0 <= i < len({arrname})", make_conflict)
 
     def _check_refine(self, src: BaseType, dst: BaseType, line: int, context: str,
                       param_name: Optional[str], arg: Optional[N.Expr]) -> None:
         if dst.refine.unknown:
             return  # requirement is `?` -- accepts anything
+        if P.is_dependent(dst.refine.pred):
+            # dependent return/binding obligation without call-site substitution
+            # context -> defer to a runtime check rather than mis-judging it
+            self._gradual(line, context, f"{{{dst.refine.var} | "
+                          f"{P.render(dst.refine.pred, dst.refine.var)}}}")
+            return
         if src.refine.unknown:
             # gradual point: known requirement, unknown source -> runtime check
             self.warnings.append(Warning(

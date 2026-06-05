@@ -79,14 +79,16 @@ class Interpreter:
     def call_user(self, name: str, args: List):
         decl = self.fns[name]
         env: Dict[str, object] = {}
-        for (pname, pty), val in zip(self.fn_params[name], args):
-            self._enforce(pname, pty, val)
+        # bind all params first so dependent contracts can reference siblings/len
+        for (pname, _pty), val in zip(self.fn_params[name], args):
             env[pname] = val
+        for (pname, pty), val in zip(self.fn_params[name], args):
+            self._enforce(pname, pty, val, env)
         return self.eval_block(decl.body, env)
 
-    def _enforce(self, pname: str, pty: T.Type, val) -> None:
+    def _enforce(self, pname: str, pty: T.Type, val, env: Dict[str, object]) -> None:
         if isinstance(pty, T.BaseType) and pty.name == "Int" and not pty.refine.unknown:
-            if not P.eval_pred(pty.refine.pred, val):
+            if not P.eval_pred(pty.refine.pred, val, env):
                 raise ProvisoCastError(
                     f"runtime refinement check failed for `{pname}`: value {val} "
                     f"violates {{{pty.refine.var} | "
@@ -96,8 +98,11 @@ class Interpreter:
     def call_builtin(self, name: str, args: List):
         sig = self.builtins[name]
         # enforce refined params at the boundary, too
+        benv = {pn: v for (pn, _t, _l), v in zip(sig.params, args)}
         for (pname, pty, _lin), val in zip(sig.params, args):
-            self._enforce(pname, pty, val)
+            self._enforce(pname, pty, val, benv)
+        if name == "len":
+            return len(args[0])
         if name == "print":
             line = str(_show(args[0]))
             self.output.append(line)
@@ -160,6 +165,20 @@ class Interpreter:
                 return self.eval_block(e.handler, henv)
         if isinstance(e, N.Block):
             return self.eval_block(e, env)
+        if isinstance(e, N.ArrayLit):
+            return [self.eval(el, env) for el in e.elements]
+        if isinstance(e, N.Index):
+            arr = self.eval(e.arr, env)
+            idx = self.eval(e.idx, env)
+            if not isinstance(arr, list):
+                raise ProvisoRuntimeError(f"cannot index a non-array at line {e.line}")
+            if idx < 0 or idx >= len(arr):
+                raise ProvisoRuntimeError(
+                    f"index {idx} out of bounds at line {e.line} (array length "
+                    f"{len(arr)}) -- a refinement Int{{k | k >= 0 && k < len(a)}} would "
+                    f"have caught this statically"
+                )
+            return arr[idx]
         raise ProvisoRuntimeError(f"cannot evaluate {e!r}")
 
     def _binop(self, e: N.BinOp, env):
@@ -200,6 +219,8 @@ def _show(v) -> str:
         return "false"
     if v is None:
         return "()"
+    if isinstance(v, list):
+        return "[" + ", ".join(_show(x) for x in v) + "]"
     return str(v)
 
 

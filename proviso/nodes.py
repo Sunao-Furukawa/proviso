@@ -127,6 +127,19 @@ class Call(Expr):
 
 
 @dataclass
+class ArrayLit(Expr):
+    elements: List[Expr]
+    line: int = 0
+
+
+@dataclass
+class Index(Expr):
+    arr: Expr
+    idx: Expr
+    line: int = 0
+
+
+@dataclass
 class If(Expr):
     cond: Expr
     then: "Block"

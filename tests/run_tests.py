@@ -174,6 +174,42 @@ d, _ = analyze_src(_leak)
 check("inferred Net leaks through a caller declaring only {IO}",
       codes(d) == ["effect-leak"], codes(d))
 
+# --- #5 + #7: dependent refinements & arrays ------------------------------- #
+print("#5/#7 dependent refinements + arrays:")
+_arr = open(os.path.join(SAMPLES, "arrays.pvo"), encoding="utf-8-sig").read()
+d, w = analyze_src(_arr)
+check("arrays sample: no hard errors", d == [], codes(d))
+r, o = run_src(_arr)
+check("arrays sample runs -> 30 with array printed",
+      r == 30 and o[0] == "[10, 20, 30]" and o[1] == "3", (r, o))
+
+_good = ("fn between(lo: Int, hi: Int{h | h >= lo}, x: Int{v | v >= lo && v <= hi}) -> Int { x }\n"
+         "fn main() -> Int { between(1, 10, 5) }\n")
+d, w = analyze_src(_good)
+check("dependent precondition proven statically (between 1,10,5)",
+      d == [] and w == [], (codes(d), len(w)))
+
+d, _ = analyze_src(open(os.path.join(EX, "07_dependent.pvo"), encoding="utf-8-sig").read())
+check("dependent violation -> refine-conflict(s)",
+      "refine-conflict" in codes(d) and len(d) >= 1, codes(d))
+
+_ga = "fn get_at(xs: Array, i: Int{k | k >= 0 && k < len(xs)}) -> Int { xs[i] }\n"
+d, w = analyze_src(_ga)
+check("in-bounds index proven inside get_at (no runtime check)",
+      d == [] and w == [], (codes(d), len(w)))
+
+d, _ = analyze_src("fn f(xs: Array) -> Int { xs[-1] }\n")
+check("provably out-of-bounds -> hard bounds error", codes(d) == ["bounds"], codes(d))
+
+_oob = ("fn g(xs: Array, i: Int{k | k >= 0 && k < len(xs)}) -> Int { xs[i] }\n"
+        "fn main() -> Int { let a = [1, 2]; g(a, 5) }\n")
+fired = False
+try:
+    run_src(_oob)
+except ProvisoCastError:
+    fired = True
+check("runtime check catches an out-of-range index", fired)
+
 print()
 print(f"{_passed} passed, {_failed} failed")
 sys.exit(1 if _failed else 0)

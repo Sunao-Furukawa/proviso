@@ -188,30 +188,48 @@ class Parser:
         if self.at("kw", "false"):
             self.eat("kw", "false")
             return P.PFalse()
-        # comparison:  var OP int   |   int OP var
-        if self.at("ident"):
-            name = self.eat("ident")
-            if name.value != var:
-                raise ParseError(
-                    f"refinement may only mention its bound variable {var!r}, "
-                    f"got {name.value!r}",
-                    name.line, name.col,
-                )
-            op = self._eat_cmp()
-            const = int(self.eat("int").value)
-            return P.PCmp(op, const)
+        # relation: term CMP term  (terms may be dependent: other vars, len(x), arith)
+        lhs = self._term(var)
+        op = self._eat_cmp()
+        rhs = self._term(var)
+        return self._mk_rel(op, lhs, rhs)
+
+    def _mk_rel(self, op: str, lhs: "P.Term", rhs: "P.Term") -> P.Pred:
+        # normalise the common single-variable cases to PCmp so the bundled
+        # sampler / interval inference keep working unchanged
+        if isinstance(lhs, P.TVal) and isinstance(rhs, P.TInt):
+            return P.PCmp(op, rhs.k)
+        if isinstance(lhs, P.TInt) and isinstance(rhs, P.TVal):
+            return P.PCmp(_FLIP[op], lhs.k)
+        return P.PRel(op, lhs, rhs)
+
+    def _term(self, var: str) -> "P.Term":
+        left = self._factor(var)
+        while self.cur.kind == "sym" and self.cur.value in ("+", "-"):
+            op = self.eat("sym").value
+            left = P.TArith(op, left, self._factor(var))
+        return left
+
+    def _factor(self, var: str) -> "P.Term":
+        left = self._term_atom(var)
+        while self.cur.kind == "sym" and self.cur.value == "*":
+            self.eat("sym", "*")
+            left = P.TArith("*", left, self._term_atom(var))
+        return left
+
+    def _term_atom(self, var: str) -> "P.Term":
         if self.at("int"):
-            const = int(self.eat("int").value)
-            op = self._eat_cmp()
-            name = self.eat("ident")
-            if name.value != var:
-                raise ParseError(
-                    f"refinement may only mention its bound variable {var!r}",
-                    name.line, name.col,
-                )
-            return P.PCmp(_FLIP[op], const)
+            return P.TInt(int(self.eat("int").value))
+        if self.at("ident"):
+            name = self.eat("ident").value
+            if name == "len" and self.at("sym", "("):
+                self.eat("sym", "(")
+                arg = self.eat("ident").value
+                self.eat("sym", ")")
+                return P.TLen(arg)
+            return P.TVal() if name == var else P.TVar(name)
         t = self.cur
-        raise ParseError(f"malformed refinement near {t.value!r}", t.line, t.col)
+        raise ParseError(f"malformed refinement term near {t.value!r}", t.line, t.col)
 
     def _eat_cmp(self) -> str:
         t = self.cur
@@ -323,8 +341,14 @@ class Parser:
 
     def _postfix(self) -> N.Expr:
         expr = self._primary()
-        while self.at("sym", "("):
-            # only callable on a bare identifier in v1
+        while self.at("sym", "(") or self.at("sym", "["):
+            if self.at("sym", "["):
+                lb = self.eat("sym", "[")
+                idx = self.parse_expr()
+                self.eat("sym", "]")
+                expr = N.Index(expr, idx, lb.line)
+                continue
+            # call: only on a bare identifier in v1
             if not isinstance(expr, N.Var):
                 t = self.cur
                 raise ParseError("only named functions are callable", t.line, t.col)
@@ -357,6 +381,15 @@ class Parser:
             inner = self.parse_expr()
             self.eat("sym", ")")
             return inner
+        if self.at("sym", "["):
+            lb = self.eat("sym", "[")
+            elems = []
+            if not self.at("sym", "]"):
+                elems.append(self.parse_expr())
+                while self.accept("sym", ","):
+                    elems.append(self.parse_expr())
+            self.eat("sym", "]")
+            return N.ArrayLit(elems, lb.line)
         if self.at("sym", "{"):
             return self.parse_block()
         raise ParseError(f"unexpected {t.value!r}", t.line, t.col)

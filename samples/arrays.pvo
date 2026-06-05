@@ -1,0 +1,22 @@
+# Arrays (#7) + dependent bounds (#5).
+# `get_at` demands a provably in-range index, so inside its body `xs[i]` needs
+# NO runtime check. Calls with a literal index on an array of statically-unknown
+# length are checked at runtime instead (gradual). `between` shows a dependent
+# precondition (hi >= lo, lo <= x <= hi) proven entirely statically by the SMT backend.
+
+fn get_at(xs: Array, i: Int{k | k >= 0 && k < len(xs)}) -> Int {
+  xs[i]
+}
+
+fn between(lo: Int, hi: Int{h | h >= lo}, x: Int{v | v >= lo && v <= hi}) -> Int {
+  x
+}
+
+fn main() -> Int ! {IO} {
+  let a = [10, 20, 30];
+  print(a);                  # [10, 20, 30]
+  print(len(a));             # 3
+  print(get_at(a, 0));       # 10  (bounds checked at runtime: a's length is unknown statically)
+  print(between(1, 10, 5));  # 5   (proven statically)
+  get_at(a, 2)               # returns 30
+}

@@ -51,13 +51,23 @@ def _sem_type(te: Optional[N.TypeExpr]) -> T.Type:
 class Interpreter:
     def __init__(self, module: N.Module):
         self.module = module
+        self.aliases = {a.name: a.type for a in getattr(module, "aliases", [])}
         self.fns: Dict[str, N.FnDecl] = {d.name: d for d in module.decls}
         self.fn_params: Dict[str, List] = {
-            d.name: [(p.name, _sem_type(p.type)) for p in d.params]
+            d.name: [(p.name, self._sem_type(p.type)) for p in d.params]
             for d in module.decls
         }
         self.builtins = builtin_signatures()
         self.output: List[str] = []
+
+    def _sem_type(self, te: Optional[N.TypeExpr]) -> T.Type:
+        # resolve type aliases before lowering, so runtime contracts on aliased
+        # refinement types (e.g. `type Nat = Int{n | n >= 0}`) are still enforced
+        seen = set()
+        while te is not None and te.name in self.aliases and te.name not in seen:
+            seen.add(te.name)
+            te = self.aliases[te.name]
+        return _sem_type(te)
 
     # --- entry ------------------------------------------------------------ #
     def run(self, entry: str = "main"):

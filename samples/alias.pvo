@@ -1,0 +1,20 @@
+# Type aliases (#2): name a refined type once, reuse it everywhere.
+# `Nat` and `Percent` expand to refinement types; the runtime contract is
+# preserved through the alias, and so are the dialogue-style diagnostics.
+
+type Nat = Int{n | n >= 0}
+type Percent = Int{p | p >= 0 && p <= 100}
+
+fn clamp_high(x: Nat) -> Percent {
+  if x <= 100 {
+    x          # here x is proven 0..100, i.e. Percent
+  } else {
+    100
+  }
+}
+
+fn main() -> Int ! {IO} {
+  print(clamp_high(42));    # 42
+  print(clamp_high(250));   # 100
+  clamp_high(0)             # returns 0
+}

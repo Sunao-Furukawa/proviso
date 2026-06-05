@@ -77,11 +77,23 @@ class Parser:
     # --- entry ------------------------------------------------------------- #
     def parse_module(self) -> N.Module:
         decls = []
+        aliases = []
         while not self.at("eof"):
-            decls.append(self.parse_fn())
-        return N.Module(decls)
+            if self.at("kw", "type"):
+                aliases.append(self.parse_alias())
+            else:
+                decls.append(self.parse_fn())
+        return N.Module(decls, aliases)
 
     # --- declarations ------------------------------------------------------ #
+    def parse_alias(self) -> N.TypeAlias:
+        kw = self.eat("kw", "type")
+        name = self.eat("ident").value
+        self.eat("sym", "=")
+        ty = self.parse_type()
+        self.accept("sym", ";")  # optional terminator
+        return N.TypeAlias(name, ty, kw.line)
+
     def parse_fn(self) -> N.FnDecl:
         kw = self.eat("kw", "fn")
         name = self.eat("ident").value
@@ -96,10 +108,13 @@ class Parser:
         if self.accept("sym", "->"):
             ret = self.parse_type()
         effects = []
+        effects_declared = False
         if self.accept("sym", "!"):
+            effects_declared = True
             effects = self.parse_effect_row()
         body = self.parse_block()
-        return N.FnDecl(name, params, ret, effects, body, kw.line)
+        return N.FnDecl(name, params, ret, effects, body, kw.line,
+                        effects_declared=effects_declared)
 
     def parse_param(self) -> N.Param:
         linear = self.accept("kw", "linear") is not None

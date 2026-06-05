@@ -41,6 +41,14 @@ class Param:
 
 
 @dataclass
+class TypeAlias:
+    """`type Name = <type>` — a reusable name for a (possibly refined) type."""
+    name: str
+    type: TypeExpr
+    line: int = 0
+
+
+@dataclass
 class FnDecl:
     name: str
     params: List[Param]
@@ -48,11 +56,13 @@ class FnDecl:
     effects: List[EffectExpr]
     body: "Block"
     line: int = 0
+    effects_declared: bool = False  # was a `!` effect row written? (vs. inferred)
 
 
 @dataclass
 class Module:
     decls: List[FnDecl]
+    aliases: List[TypeAlias] = field(default_factory=list)
 
 
 # --- Statements ------------------------------------------------------------ #

@@ -6,7 +6,7 @@ from typing import List
 
 KEYWORDS = {
     "fn", "let", "linear", "if", "else", "true", "false",
-    "handle", "catch", "return",
+    "handle", "catch", "return", "type",
 }
 
 # Multi-character operators must be tried before single-character ones.

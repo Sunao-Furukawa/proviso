@@ -122,20 +122,22 @@ builtins: print (IO), throw (Exc), abs (pure, proven >=0),
 ## Scope & honesty
 
 What is **real** and runs: gradual refinements with runtime contracts; an implication
-solver with counterexamples; interval-based refinement inference through `+ - *`;
-occurrence typing through guards; an effect row with subset checking and a dependent
-effect parameter; ownership as a linear-use analysis; algebraic-style `handle/catch` for
-exceptions; the full dialogue diagnostics.
+solver with counterexamples (**Z3-backed when `z3-solver` is installed**, with a pure-Python
+fallback); interval-based refinement inference through `+ - *`; occurrence typing through
+guards; **type aliases** (`type Nat = Int{n | n >= 0}`); an effect row with subset checking,
+**effect inference for omitted rows**, and a dependent effect parameter; ownership as a
+linear-use analysis; algebraic-style `handle/catch` for exceptions; the full dialogue
+diagnostics.
 
 What is deliberately **bounded** in this prototype (each is a known, non-trivial extension,
 not an oversight):
 
-- **Refinements range over a single bound variable** vs. integer constants (a decidable
-  fragment). Full Π-types / cross-argument dependency (`b: Int{m | m < a}`) and a real SMT
-  backend are the natural next step; the solver interface (`implies` returning a
-  counterexample) is designed to be swapped for Z3 without touching the diagnostics.
-- The solver is **complete for this fragment** by sampling at constants, but is not a
-  general decision procedure.
+- The refinement solver is **Z3 when available, else a sampler** that is complete for the
+  single-variable comparison fragment but is not a general decision procedure. Either way,
+  **surface refinements still range over a single bound variable** vs. integer constants;
+  full Π-types / cross-argument dependency (`b: Int{m | m < a}`) and measure-referencing
+  predicates (`len(xs)`) are the natural next step. The `implies`-returns-counterexample
+  interface is backend-agnostic by design.
 - **Effects** are labels with optional refinement parameters; first-class, fully resumable
   effect handlers (multi-shot continuations) are modeled only for `Exc` here.
 - **Ownership** uses a simple "any use moves; borrow/clone read" model over straight-line

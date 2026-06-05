@@ -1,11 +1,13 @@
 # ── Axis 2: effects on the type, integrated with dependent types ─────────
 # Two obligations:
-#   (1) `log` performs IO, but its signature hides it -> effect leak.
+#   (1) `log` explicitly promises purity (`! {}`) but performs IO -> effect leak.
+#       (Omitting the `!` row entirely would instead *infer* the effect — see
+#        samples/infer_effects.pvo. Writing `! {}` is a promise the checker keeps.)
 #   (2) `fetch` asks http_get for 5 retries, but the `Net` effect's safety
 #       property caps retries at 3. That cap is a *refinement* on the
 #       operation's argument, so the very same solver flags it.
 
-fn log(msg: Int) -> Int {
+fn log(msg: Int) -> Int ! {} {
   print(msg);
   msg
 }

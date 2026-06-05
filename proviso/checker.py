@@ -65,15 +65,79 @@ class Checker:
         self.fns: Dict[str, FnType] = {}
         self.fn_decls: Dict[str, N.FnDecl] = {}
         self.builtins = builtin_signatures()
+        self.aliases: Dict[str, N.TypeExpr] = {
+            a.name: a.type for a in getattr(module, "aliases", [])
+        }
 
     # --- public ----------------------------------------------------------- #
     def run(self) -> Tuple[List[Diagnostic], List[Warning]]:
         for d in self.module.decls:
             self.fns[d.name] = self._fn_type(d)
             self.fn_decls[d.name] = d
+        # Effect inference: functions WITHOUT a declared `!` row export the effects
+        # inferred from their body (a fixpoint, so mutual recursion is handled). This
+        # is the gradual story applied to effects -- omit the row and it is computed.
+        self._infer_effect_rows()
         for d in self.module.decls:
             self._check_fn(d)
         return self.diags, self.warnings
+
+    def _infer_effect_rows(self) -> None:
+        est: Dict[str, set] = {}
+        for d in self.module.decls:
+            if d.effects_declared:
+                est[d.name] = {e.name for e in self.fns[d.name].effects}
+            else:
+                est[d.name] = set()
+        changed = True
+        while changed:
+            changed = False
+            for d in self.module.decls:
+                if d.effects_declared:
+                    continue
+                s = self._collect_effects(d.body, est)
+                if s != est[d.name]:
+                    est[d.name] = s
+                    changed = True
+        for d in self.module.decls:
+            if not d.effects_declared:
+                self.fns[d.name].effects = [Effect(n) for n in sorted(est[d.name])]
+
+    def _callee_effects(self, name: str, est: Dict[str, set]) -> set:
+        if name in est:
+            return est[name]
+        b = self.builtins.get(name)
+        return {e.name for e in b.effects} if b else set()
+
+    def _collect_effects(self, e, est: Dict[str, set]) -> set:
+        if isinstance(e, N.Block):
+            s = set()
+            for st in e.stmts:
+                if isinstance(st, N.LetStmt):
+                    s |= self._collect_effects(st.value, est)
+                elif isinstance(st, N.ExprStmt):
+                    s |= self._collect_effects(st.expr, est)
+            if e.result is not None:
+                s |= self._collect_effects(e.result, est)
+            return s
+        if isinstance(e, N.Call):
+            s = set()
+            for a in e.args:
+                s |= self._collect_effects(a, est)
+            return s | self._callee_effects(e.fn, est)
+        if isinstance(e, N.BinOp):
+            return self._collect_effects(e.left, est) | self._collect_effects(e.right, est)
+        if isinstance(e, N.UnOp):
+            return self._collect_effects(e.operand, est)
+        if isinstance(e, N.If):
+            s = self._collect_effects(e.cond, est) | self._collect_effects(e.then, est)
+            if e.els is not None:
+                s |= self._collect_effects(e.els, est)
+            return s
+        if isinstance(e, N.Handle):
+            body = self._collect_effects(e.body, est) - {"Exc"}  # handle discharges Exc
+            return body | self._collect_effects(e.handler, est)
+        return set()
 
     def lookup(self, name: str) -> Optional[FnType]:
         return self.fns.get(name) or self.builtins.get(name)
@@ -84,9 +148,17 @@ class Checker:
         return None
 
     # --- type-expression -> semantic type --------------------------------- #
+    def _resolve_alias(self, te: N.TypeExpr) -> N.TypeExpr:
+        seen = set()
+        while te.name in self.aliases and te.name not in seen:
+            seen.add(te.name)
+            te = self.aliases[te.name]
+        return te
+
     def _sem_type(self, te: Optional[N.TypeExpr]) -> T.Type:
         if te is None:
             return T.UNIT
+        te = self._resolve_alias(te)
         if te.name == "Bool":
             return T.BOOL
         if te.name == "Unit":
@@ -116,11 +188,14 @@ class Checker:
         self._check_assign(body_ty, sig.ret, d.body.line,
                            context=f"return value of `{d.name}`")
 
-        # effect obligation: inferred subset-of declared
-        declared = {e.name for e in sig.effects}
-        for eff_name, line in body_effects.items():
-            if eff_name not in declared:
-                self._effect_leak(d, eff_name, line)
+        # effect obligation: inferred subset-of declared.
+        # Only enforced when the `!` row was actually written; an omitted row is
+        # inferred (see _infer_effect_rows), so by construction it cannot leak.
+        if d.effects_declared:
+            declared = {e.name for e in sig.effects}
+            for eff_name, line in body_effects.items():
+                if eff_name not in declared:
+                    self._effect_leak(d, eff_name, line)
 
     # --- inference -------------------------------------------------------- #
     def _infer(self, e: N.Expr, env: Env) -> Tuple[T.Type, Dict[str, int]]:

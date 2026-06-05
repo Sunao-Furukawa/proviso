@@ -1,0 +1,15 @@
+# Effect inference (#3): a function that OMITS its `!` row has its effects
+# inferred from the body (the gradual story, applied to effects). `audit`
+# performs IO and Net but declares nothing -- and that is NOT a leak. Callers
+# still see the inferred row, so `main`, which DOES declare its effects, must
+# account for {IO, Net}.
+
+fn audit(code: Int) {        # no `->` and no `!` : returns Unit, effects inferred {IO, Net}
+  print(code);
+  http_get(1);
+}
+
+fn main() -> Int ! {IO, Net} {
+  audit(7);
+  0
+}

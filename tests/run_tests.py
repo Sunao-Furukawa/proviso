@@ -101,6 +101,79 @@ except ProvisoCastError:
     fired = True
 check("runtime refinement check fires on 0", fired)
 
+SAMPLES = os.path.join(ROOT, "samples")
+
+
+def analyze_src(src):
+    module = proviso.parse(src)
+    diags, warns = proviso.check(module, src)
+    diags = diags + proviso.check_ownership(module, src)
+    return diags, warns
+
+
+def run_src(src, entry="main"):
+    interp = Interpreter(proviso.parse(src))
+    return interp.run(entry), interp.output
+
+
+# --- #1: SMT backend -------------------------------------------------------- #
+print("#1 SMT backend:")
+check("backend is z3 or sampler", P.solver_backend() in ("z3", "sampler"),
+      P.solver_backend())
+# sampler and (when present) z3 must agree on these implication decisions
+_cases = [
+    (P.PCmp(">=", 0), P.PCmp(">", 0), False),   # has counterexample
+    (P.PCmp(">", 0), P.PCmp(">=", 0), True),    # holds
+    (P.PAnd(P.PCmp(">=", 0), P.PCmp("<=", 3)), P.PCmp(">=", 0), True),
+]
+ok_parity = all((P._sampler_implies(a, b) is None) == holds for a, b, holds in _cases)
+check("sampler decisions correct", ok_parity)
+if P._HAVE_Z3:
+    okz = all((P._z3_implies(a, b) is None) == holds for a, b, holds in _cases)
+    check("z3 decisions agree with sampler", okz)
+    check("z3 counterexample for c>=0 !=> n>0 is 0",
+          P._z3_implies(P.PCmp(">=", 0), P.PCmp(">", 0)) == 0)
+
+# --- #2: type aliases ------------------------------------------------------- #
+print("#2 type aliases:")
+d, w = analyze_src(open(os.path.join(SAMPLES, "alias.pvo"), encoding="utf-8-sig").read())
+check("alias sample checks clean", d == [] and w == [], codes(d))
+r, o = run_src(open(os.path.join(SAMPLES, "alias.pvo"), encoding="utf-8-sig").read())
+check("alias sample runs -> 0 with [42,100]", r == 0 and o == ["42", "100"], (r, o))
+
+_alias_conf = "type Pos = Int{n | n > 0}\nfn need(x: Pos) -> Int { x }\nfn main() -> Int { need(0) }\n"
+d, _ = analyze_src(_alias_conf)
+check("alias refinement still produces refine-conflict",
+      codes(d) == ["refine-conflict"], codes(d))
+check("alias conflict counterexample is 0",
+      d and "0" in (d[0].counterexample or ""))
+
+# aliased refinement is still a runtime contract (via a gradual source)
+_alias_rt = ("type Pos = Int{n | n > 0}\n"
+             "fn need(x: Pos) -> Int { x }\n"
+             "fn thru(raw: Int) -> Int { need(raw) }\n"
+             "fn main() -> Int { thru(0) }\n")
+fired = False
+try:
+    run_src(_alias_rt)
+except ProvisoCastError:
+    fired = True
+check("aliased refinement enforced at runtime", fired)
+
+# --- #3: effect inference --------------------------------------------------- #
+print("#3 effect inference:")
+d, w = analyze_src(open(os.path.join(SAMPLES, "infer_effects.pvo"), encoding="utf-8-sig").read())
+check("omitted effect row infers (no leak)", d == [], codes(d))
+r, o = run_src(open(os.path.join(SAMPLES, "infer_effects.pvo"), encoding="utf-8-sig").read())
+check("infer_effects runs -> 0", r == 0 and o[0] == "7", (r, o))
+
+# inferred effects still propagate to a declared caller -> leak if unaccounted
+_leak = ("fn audit(c: Int) { print(c); http_get(1); }\n"
+         "fn main() -> Int ! {IO} { audit(0); 0 }\n")
+d, _ = analyze_src(_leak)
+check("inferred Net leaks through a caller declaring only {IO}",
+      codes(d) == ["effect-leak"], codes(d))
+
 print()
 print(f"{_passed} passed, {_failed} failed")
 sys.exit(1 if _failed else 0)

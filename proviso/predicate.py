@@ -21,6 +21,34 @@ from typing import Optional, Set, List
 NEG_INF = float("-inf")
 POS_INF = float("inf")
 
+# --------------------------------------------------------------------------- #
+# Solver backend selection.
+#
+# The whole point of the `implies(P, Q) -> counterexample | None` interface is that
+# it can be backed by anything that decides the logic and produces a witness.  If the
+# `z3-solver` package is importable we use Z3 (sound, complete, and far beyond the
+# single-variable fragment the bundled sampler can decide); otherwise we fall back to
+# the pure-Python sampler so the language still runs with zero dependencies.
+# Set PROVISO_SOLVER=sampler to force the fallback (used in tests).
+# --------------------------------------------------------------------------- #
+import os as _os
+
+try:
+    import z3 as _z3  # type: ignore
+    _HAVE_Z3 = True
+except Exception:  # pragma: no cover - depends on environment
+    _z3 = None
+    _HAVE_Z3 = False
+
+
+def _use_z3() -> bool:
+    return _HAVE_Z3 and _os.environ.get("PROVISO_SOLVER", "").lower() != "sampler"
+
+
+def solver_backend() -> str:
+    """Name of the active backend: 'z3' or 'sampler'."""
+    return "z3" if _use_z3() else "sampler"
+
 
 class Pred:
     """Base class for refinement predicates over the implicit value variable."""
@@ -134,20 +162,75 @@ def _candidate_points(preds: List[Pred]) -> List[int]:
     return sorted(pts)
 
 
-def implies(p: Pred, q: Pred) -> Optional[int]:
-    """Return None if P => Q holds; otherwise a counterexample x (P(x) & not Q(x))."""
+# --- pure-Python fallback (complete for the single-variable comparison fragment) -- #
+def _sampler_implies(p: Pred, q: Pred) -> Optional[int]:
     for x in _candidate_points([p, q]):
         if eval_pred(p, x) and not eval_pred(q, x):
             return x
     return None
 
 
-def witness(p: Pred) -> Optional[int]:
-    """Return a value satisfying P, or None if P looks unsatisfiable."""
+def _sampler_witness(p: Pred) -> Optional[int]:
     for x in _candidate_points([p]):
         if eval_pred(p, x):
             return x
     return None
+
+
+# --- Z3 backend -------------------------------------------------------------- #
+def _to_z3(p: Pred, v):
+    if isinstance(p, PTrue):
+        return _z3.BoolVal(True)
+    if isinstance(p, PFalse):
+        return _z3.BoolVal(False)
+    if isinstance(p, PCmp):
+        c = p.const
+        return {
+            "<": v < c, "<=": v <= c, ">": v > c, ">=": v >= c,
+            "==": v == c, "!=": v != c,
+        }[p.op]
+    if isinstance(p, PAnd):
+        return _z3.And(_to_z3(p.a, v), _to_z3(p.b, v))
+    if isinstance(p, POr):
+        return _z3.Or(_to_z3(p.a, v), _to_z3(p.b, v))
+    if isinstance(p, PNot):
+        return _z3.Not(_to_z3(p.a, v))
+    raise TypeError(f"unknown predicate node: {p!r}")
+
+
+def _z3_model_value(solver, v) -> int:
+    m = solver.model()
+    val = m[v]
+    return val.as_long() if val is not None else 0
+
+
+def _z3_implies(p: Pred, q: Pred) -> Optional[int]:
+    v = _z3.Int("v")
+    s = _z3.Solver()
+    s.add(_z3.And(_to_z3(p, v), _z3.Not(_to_z3(q, v))))  # P & not Q -> a counterexample
+    if s.check() == _z3.sat:
+        return _z3_model_value(s, v)
+    return None
+
+
+def _z3_witness(p: Pred) -> Optional[int]:
+    v = _z3.Int("v")
+    s = _z3.Solver()
+    s.add(_to_z3(p, v))
+    if s.check() == _z3.sat:
+        return _z3_model_value(s, v)
+    return None
+
+
+# --- public dispatchers ------------------------------------------------------ #
+def implies(p: Pred, q: Pred) -> Optional[int]:
+    """Return None if P => Q holds; otherwise a counterexample x (P(x) & not Q(x))."""
+    return _z3_implies(p, q) if _use_z3() else _sampler_implies(p, q)
+
+
+def witness(p: Pred) -> Optional[int]:
+    """Return a value satisfying P, or None if P is unsatisfiable."""
+    return _z3_witness(p) if _use_z3() else _sampler_witness(p)
 
 
 def equivalent(p: Pred, q: Pred) -> bool:

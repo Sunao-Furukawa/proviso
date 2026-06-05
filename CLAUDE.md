@@ -54,11 +54,23 @@ python tests\run_tests.py                           # 16 tests
 `run` type-checks first and refuses to run on hard errors; gradual points (`?`) are deferred
 to runtime checks instead. Source files use the `.pvo` extension.
 
+## Implemented extensions (since v0.1 baseline)
+
+- **#1 SMT backend**: `predicate.py` uses Z3 when `z3-solver` is importable, else the
+  pure-Python sampler. Backend-agnostic `implies`/`witness`; `PROVISO_SOLVER=sampler` forces
+  the fallback. `solver_backend()` reports the active one.
+- **#2 type aliases**: `type Name = <type>` (see `samples/alias.pvo`). Resolved in both the
+  checker and the interpreter, so runtime contracts and diagnostics pass through aliases.
+- **#3 effect inference**: a function that omits its `!` row has effects inferred from its
+  body (fixpoint; mutual recursion ok) and exported to callers — no leak. Writing `! {...}`
+  (incl. `! {}`) is still an enforced contract. See `samples/infer_effects.pvo`.
+
 ## Bounded scope (deliberate, documented in README.md)
 
-Single-bound-variable refinements over linear integer arithmetic (no SMT / full Π-types
-yet — the `implies`-returns-counterexample interface is built to swap in Z3 later);
-`Exc`-only resumable handlers; simple linear-use ownership; only `Int`/`Bool`/`Unit`.
+Surface refinements still range over a single bound variable × integer constants (no full
+Π-types / cross-argument dependency / measures yet, even though Z3 could decide them);
+`Exc`-only resumable handlers; no effect polymorphism; simple linear-use ownership; only
+`Int`/`Bool`/`Unit`; aliases are bare names only.
 
-Natural next steps: real SMT backend + cross-argument dependency; multi-shot effect
-handlers; user-defined types; strings.
+Natural next steps: cross-argument dependent refinements + measures; multi-shot effect
+handlers + effect variables; user-defined types; strings.

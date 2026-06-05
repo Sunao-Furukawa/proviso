@@ -138,9 +138,10 @@ not an oversight):
   (`[1,2,3]`, `len`, `a[i]`) are real: call sites discharge obligations via Z3 — proven →
   no runtime check; provably impossible → hard error with a counterexample; otherwise →
   gradual runtime check. A guard like `if len(xs) > 0` / `if i < len(xs)` is understood
-  (occurrence typing), so the guarded access is *proven* (no runtime check). The only
-  measure is `len`, and array length is not yet tracked statically (unguarded literal
-  indexing stays a runtime check).
+  (occurrence typing), so the guarded access is *proven*. A **literal array's length is
+  tracked statically** (`[10,20,30]` has `len == 3`), so in-range indexing is proven and an
+  out-of-range literal index is a static error. The only measure is `len`; array length
+  passed through a function parameter is not tracked (the param is gradual).
 - **User-defined types** — `enum`s with constructors and `match` (single-variant = record),
   with exhaustiveness reported as a dialogue. Patterns **nest** (`Cons(a, Cons(b, rest))`)
   and allow constructor / variable / wildcard / literal patterns; exhaustiveness is checked

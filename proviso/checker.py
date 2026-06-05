@@ -297,7 +297,9 @@ class Checker:
             for el in e.elements:
                 _, ee = self._infer(el, env)
                 eff.update(ee)
-            return T.ARRAY, eff
+            # track the literal's length statically: len(self) == N (#4)
+            n = len(e.elements)
+            return BaseType("Array", Refinement("n", P.PCmp("==", n))), eff
         if isinstance(e, N.Index):
             return self._infer_index(e, env)
         if isinstance(e, N.Match):
@@ -744,6 +746,9 @@ class Checker:
         for name, ty in env.items():
             if isinstance(ty, BaseType) and ty.name == "Int" and not ty.refine.unknown:
                 out.append(P.subst_value(ty.refine.pred, P.TVar(name)))
+            elif isinstance(ty, BaseType) and ty.name == "Array" and not ty.refine.unknown:
+                # statically-known array length becomes the fact `len(name) == N` (#4)
+                out.append(P.subst_value(ty.refine.pred, P.TLen(name)))
         out.extend(self.assumptions)  # path facts from enclosing guards (#5)
         return out
 

@@ -95,10 +95,12 @@ to runtime checks instead. Source files use the `.pvo` extension.
 Dependent refinements work; the only measure is `len`. **len-guard occurrence typing (#5b)
 is implemented**: a guard like `if len(xs) > 0` / `if i < len(xs)` records a path fact
 (self.assumptions in the checker) so the guarded array access is statically proven (no
-runtime check). Array *length* is still not tracked statically, so an *unguarded* literal
-index is runtime-checked. Linear-use ownership; base types `Int`/`Bool`/`Unit`/`Array(Int)`/
-`Fn`/`Str` plus user `enum`s. Constructor-field runtime contracts not enforced;
-function-arg subtyping is gradual.
+runtime check). **Literal array length is tracked statically (#4)**: an array literal's type carries
+`len(self) == N` (BaseType("Array", Refinement)), surfaced by _assumptions as `len(a) == N`,
+so in-range literal indexing is proven and out-of-range is a hard `bounds` error. Array
+length passed through a function parameter is still gradual. Linear-use ownership; base
+types `Int`/`Bool`/`Unit`/`Array(Int)`/`Fn`/`Str` plus user `enum`s. Constructor-field
+runtime contracts not enforced; function-arg subtyping is gradual.
 
 All seven requested features (#1-#7) are implemented. Plus: **strings** (`Str` type,
 `"..."` literals with escapes, `+` concat, `==`, `to_str(n)`) and **nested patterns**
@@ -118,8 +120,8 @@ deep recursion (e.g. sumto(100000), count(300000)) stays flat instead of overflo
 Python C stack. Handler boundaries / resumptions use nested `_drive` calls (one frame per
 active handler/resume, not per recursion level). Suite is 63 tests.
 
-Roadmap agreed with the user (do in this order): **#5b len-guard occurrence typing [DONE]**
--> #4 static array-length tracking -> (#3 more measures) -> #8 contract erasure + blame ->
+Roadmap agreed with the user (do in this order): #5b len-guard occurrence typing [DONE]
+-> **#4 static array-length tracking [DONE]** -> (#3 more measures) -> #8 contract erasure + blame ->
 #2 precise function-arg subtyping -> #9 typestate -> #10 LSP. Deferred: #1 nested
 cross-handler algebraic-effect generalization (high risk). Also: nested-pattern
 exhaustiveness.

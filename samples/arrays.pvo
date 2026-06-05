@@ -16,7 +16,7 @@ fn main() -> Int ! {IO} {
   let a = [10, 20, 30];
   print(a);                  # [10, 20, 30]
   print(len(a));             # 3
-  print(get_at(a, 0));       # 10  (bounds checked at runtime: a's length is unknown statically)
+  print(get_at(a, 0));       # 10  (proven: a's length 3 is tracked statically)
   print(between(1, 10, 5));  # 5   (proven statically)
-  get_at(a, 2)               # returns 30
+  get_at(a, 2)               # returns 30 (also proven)
 }

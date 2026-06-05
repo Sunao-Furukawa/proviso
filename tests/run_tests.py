@@ -359,6 +359,24 @@ _ung = ("fn head(xs: Array) -> Int { xs[0] }\nfn main() -> Int { head([1, 2]) }\
 d, w = analyze_src(_ung)
 check("unguarded index stays a gradual point", d == [] and len(w) == 1, (codes(d), len(w)))
 
+# --- #4: static array-length tracking --------------------------------------- #
+print("static array-length tracking:")
+_al = open(os.path.join(SAMPLES, "array_len.pvo"), encoding="utf-8-sig").read()
+d, w = analyze_src(_al)
+check("known-length indexing is PROVEN (no gradual points)",
+      d == [] and w == [], (codes(d), len(w)))
+r, o = run_src(_al)
+check("array_len runs -> 20 with [10, 30]", r == 20 and o == ["10", "30"], (r, o))
+
+d, _ = analyze_src("fn main() -> Int { let a = [10, 20, 30]; a[5] }\n")
+check("out-of-bounds literal index -> hard bounds error", codes(d) == ["bounds"], codes(d))
+
+# a known-length array passed to a dependent get is also proven now
+_kl = ("fn get_at(xs: Array, i: Int{k | k >= 0 && k < len(xs)}) -> Int { xs[i] }\n"
+       "fn main() -> Int { let a = [1, 2, 3]; get_at(a, 2) }\n")
+d, w = analyze_src(_kl)
+check("dependent get on known-length array is proven", d == [] and w == [], (codes(d), len(w)))
+
 print()
 print(f"{_passed} passed, {_failed} failed")
 sys.exit(1 if _failed else 0)

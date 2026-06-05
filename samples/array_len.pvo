@@ -1,0 +1,10 @@
+# Static array-length tracking. A literal array's length is known to the type system
+# (here len(a) == 3), so indexing within bounds is PROVEN -- no runtime check -- and an
+# out-of-bounds literal index would be a static `bounds` error (try a[5]).
+
+fn main() -> Int ! {IO} {
+  let a = [10, 20, 30];
+  print(a[0]);     # proven in range
+  print(a[2]);     # proven in range
+  a[1]             # returns 20
+}

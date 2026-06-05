@@ -114,8 +114,13 @@ instantiated at each call from the actual function argument's effects (substitut
 _infer_call). Bare top-level fn names are function references (ArrowType / interp Closure).
 Bounded: function-arg subtyping is gradual (params/ret not strictly matched), single-level
 var instantiation, and the name-based effect-inference pass (#3) does not substitute vars.
-Suite is 60 tests.
 
-Possible next steps: a trampolined evaluator for deep recursion (the one remaining
-requested item); more measures; static array-length tracking; len-guard occurrence typing;
-nested-pattern exhaustiveness.
+Plus **trampolining**: the CPS evaluator returns `_Thunk`s driven by `_drive` (a loop), so
+deep recursion (e.g. sumto(100000), count(300000)) stays flat instead of overflowing the
+Python C stack. Handler boundaries / resumptions use nested `_drive` calls (one frame per
+active handler/resume, not per recursion level). Suite is 63 tests.
+
+Possible next steps: nested cross-handler algebraic-effect semantics (the synchronous-delim
+model handles single/nested-same-handler cases, not an inner body performing an outer op);
+more measures; static array-length tracking; len-guard occurrence typing; nested-pattern
+exhaustiveness; precise function-arg subtyping.

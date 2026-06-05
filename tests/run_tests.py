@@ -329,6 +329,21 @@ _bad = ("fn apply(f: Fn(Int) -> Int ! e, x: Int) -> Int ! e { f(x) }\n"
 d, _ = analyze_src(_bad)
 check("non-function where Fn expected -> type error", "type" in codes(d), codes(d))
 
+# --- trampolining (deep recursion) ------------------------------------------ #
+print("trampolining:")
+_deep = open(os.path.join(SAMPLES, "deep.pvo"), encoding="utf-8-sig").read()
+d, w = analyze_src(_deep)
+check("deep sample checks clean", d == [], codes(d))
+r, o = run_src(_deep)
+check("sumto(100000) = 5000050000 (no stack overflow)",
+      r == 5000050000 and o == ["5000050000"], (r, o))
+
+# tail-ish deep recursion well beyond the C stack limit
+_cnt = ("fn count(n: Int) -> Int { if n == 0 { 0 } else { count(n - 1) } }\n"
+        "fn main() -> Int { count(300000) }\n")
+r, _ = run_src(_cnt)
+check("count(300000) = 0 (trampolined)", r == 0, r)
+
 print()
 print(f"{_passed} passed, {_failed} failed")
 sys.exit(1 if _failed else 0)

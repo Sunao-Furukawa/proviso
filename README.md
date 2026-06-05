@@ -5,7 +5,7 @@
 
 Proviso is a working prototype of the design you sketched: a small language built around
 "correctness you can pay for in stages." It is a real lexer → parser → gradual dependent
-type & effect checker → CPS interpreter (multi-shot effect handlers), plus the part that matters most — a
+type & effect checker → trampolined CPS interpreter (multi-shot effect handlers), plus the part that matters most — a
 diagnostics layer that turns every conflict into a **counterexample and two choices**.
 
 This is a *prototype*, not the final research language. It deliberately implements a
@@ -150,6 +150,8 @@ not an oversight):
   **precise** (`Fn(T) -> T ! e`) with **effect-variable polymorphism** — a higher-order
   function's effect row can be the variable `e`, instantiated at each call from the actual
   function argument's effects (pure arg → `{}`, IO arg → `{IO}`).
+- **Trampolined evaluator** — the CPS interpreter returns thunks driven by a loop, so deep
+  recursion (e.g. `sumto(100000)`) stays flat instead of overflowing the Python stack.
 - **Effects** are labels with optional refinement parameters; first-class, fully resumable
   effect handlers (multi-shot continuations) are modeled only for `Exc` here.
 - **Ownership** uses a simple "any use moves; borrow/clone read" model over straight-line

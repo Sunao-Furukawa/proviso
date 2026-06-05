@@ -1,0 +1,16 @@
+# Deep recursion. The evaluator is a *trampolined* CPS interpreter, so the Python
+# call stack stays flat however deep the recursion goes -- `sumto(100000)` builds a
+# 100000-deep continuation chain and still completes.
+
+fn sumto(n: Int) -> Int {
+  if n == 0 {
+    0
+  } else {
+    n + sumto(n - 1)
+  }
+}
+
+fn main() -> Int ! {IO} {
+  print(sumto(100000));   # 5000050000
+  sumto(100000)
+}

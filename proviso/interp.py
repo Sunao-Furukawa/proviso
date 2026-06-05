@@ -34,6 +34,15 @@ class ProvisoCastError(ProvisoRuntimeError):
 UNIT = None
 
 
+class Data:
+    """A runtime value of a user-defined enum: a constructor tag plus its fields."""
+    __slots__ = ("ctor", "fields")
+
+    def __init__(self, ctor: str, fields: list):
+        self.ctor = ctor
+        self.fields = fields
+
+
 def _sem_type(te: Optional[N.TypeExpr]) -> T.Type:
     if te is None:
         return T.UNIT
@@ -58,6 +67,7 @@ class Interpreter:
             for d in module.decls
         }
         self.builtins = builtin_signatures()
+        self.ctors = {v.name for e in getattr(module, "enums", []) for v in e.variants}
         self.output: List[str] = []
 
     def _sem_type(self, te: Optional[N.TypeExpr]) -> T.Type:
@@ -167,6 +177,18 @@ class Interpreter:
             return self.eval_block(e, env)
         if isinstance(e, N.ArrayLit):
             return [self.eval(el, env) for el in e.elements]
+        if isinstance(e, N.Match):
+            scrut = self.eval(e.scrutinee, env)
+            for arm in e.arms:
+                if arm.ctor is None or (isinstance(scrut, Data) and arm.ctor == scrut.ctor):
+                    arm_env = dict(env)
+                    if arm.ctor is not None:
+                        for bn, fv in zip(arm.binders, scrut.fields):
+                            arm_env[bn] = fv
+                    return self.eval(arm.body, arm_env)
+            raise ProvisoRuntimeError(
+                f"no matching arm for {getattr(scrut, 'ctor', scrut)} at line {e.line}"
+            )
         if isinstance(e, N.Index):
             arr = self.eval(e.arr, env)
             idx = self.eval(e.idx, env)
@@ -205,6 +227,8 @@ class Interpreter:
 
     def _call(self, e: N.Call, env):
         args = [self.eval(a, env) for a in e.args]
+        if e.fn in self.ctors:
+            return Data(e.fn, args)
         if e.fn in self.fns:
             return self.call_user(e.fn, args)
         if e.fn in self.builtins:
@@ -221,6 +245,10 @@ def _show(v) -> str:
         return "()"
     if isinstance(v, list):
         return "[" + ", ".join(_show(x) for x in v) + "]"
+    if isinstance(v, Data):
+        if not v.fields:
+            return v.ctor
+        return v.ctor + "(" + ", ".join(_show(f) for f in v.fields) + ")"
     return str(v)
 
 

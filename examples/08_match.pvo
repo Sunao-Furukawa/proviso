@@ -1,0 +1,19 @@
+# ── #6 user-defined types + exhaustiveness ───────────────────────────────
+# `Shape` has two variants, but `area` only handles `Circle`. A `Rect` value would
+# fall through to no arm. Proviso reports the uncovered case as a dialogue: add the
+# missing arm(s), or a wildcard `_`.
+
+enum Shape {
+  Circle(Int),
+  Rect(Int, Int)
+}
+
+fn area(s: Shape) -> Int {
+  match s {
+    Circle(r) => 3 * r * r
+  }
+}
+
+fn main() -> Int {
+  area(Circle(10))
+}

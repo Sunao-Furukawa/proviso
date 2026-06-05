@@ -88,5 +88,14 @@ UNIT = BaseType("Unit", Refinement.gradual("u"))
 ARRAY = BaseType("Array", Refinement.gradual("a"))  # array of Int (monomorphic in v0.1)
 
 
+@dataclass
+class DataType(Type):
+    """A user-defined sum type (enum). Records are single-variant enums."""
+    name: str
+
+    def __str__(self) -> str:
+        return self.name
+
+
 def effects_str(effects: List[Effect]) -> str:
     return "{" + ", ".join(str(e) for e in effects) + "}" if effects else "{}"

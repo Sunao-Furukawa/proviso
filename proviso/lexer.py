@@ -6,12 +6,12 @@ from typing import List
 
 KEYWORDS = {
     "fn", "let", "linear", "if", "else", "true", "false",
-    "handle", "catch", "return", "type",
+    "handle", "catch", "return", "type", "enum", "match",
 }
 
 # Multi-character operators must be tried before single-character ones.
 _SYMBOLS = [
-    "->", "==", "!=", "<=", ">=", "&&", "||",
+    "->", "=>", "==", "!=", "<=", ">=", "&&", "||",
     "(", ")", "{", "}", "[", "]", ",", ";", ":", "|", "!",
     "+", "-", "*", "/", "%", "<", ">", "=", ".",
 ]

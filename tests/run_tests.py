@@ -210,6 +210,31 @@ except ProvisoCastError:
     fired = True
 check("runtime check catches an out-of-range index", fired)
 
+# --- #6: user-defined types + pattern matching ----------------------------- #
+print("#6 enums + match:")
+_sh = open(os.path.join(SAMPLES, "shapes.pvo"), encoding="utf-8-sig").read()
+d, w = analyze_src(_sh)
+check("shapes sample checks clean (exhaustive)", d == [], codes(d))
+r, o = run_src(_sh)
+check("shapes runs -> 6 with output [300,20]",
+      r == 6 and o == ["300", "20"], (r, o))
+
+d, _ = analyze_src(open(os.path.join(EX, "08_match.pvo"), encoding="utf-8-sig").read())
+check("missing arm -> non-exhaustive", codes(d) == ["non-exhaustive"], codes(d))
+
+_wild = ("enum Shape { Circle(Int), Rect(Int, Int) }\n"
+         "fn f(s: Shape) -> Int { match s { Circle(r) => r, _ => 0 } }\n"
+         "fn main() -> Int { f(Rect(1, 2)) }\n")
+d, _ = analyze_src(_wild)
+check("wildcard arm makes match exhaustive", d == [], codes(d))
+r, _ = run_src(_wild)
+check("wildcard match runs -> 0", r == 0, r)
+
+_mism = ("enum Shape { Circle(Int) }\nfn f(s: Shape) -> Int { 0 }\n"
+         "fn main() -> Int { f(3) }\n")
+d, _ = analyze_src(_mism)
+check("passing Int where enum expected -> type error", codes(d) == ["type"], codes(d))
+
 print()
 print(f"{_passed} passed, {_failed} failed")
 sys.exit(1 if _failed else 0)

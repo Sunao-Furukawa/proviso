@@ -78,12 +78,38 @@ class Parser:
     def parse_module(self) -> N.Module:
         decls = []
         aliases = []
+        enums = []
         while not self.at("eof"):
             if self.at("kw", "type"):
                 aliases.append(self.parse_alias())
+            elif self.at("kw", "enum"):
+                enums.append(self.parse_enum())
             else:
                 decls.append(self.parse_fn())
-        return N.Module(decls, aliases)
+        return N.Module(decls, aliases, enums)
+
+    def parse_enum(self) -> N.EnumDecl:
+        kw = self.eat("kw", "enum")
+        name = self.eat("ident").value
+        self.eat("sym", "{")
+        variants = [self.parse_variant()]
+        while self.accept("sym", ","):
+            if self.at("sym", "}"):
+                break
+            variants.append(self.parse_variant())
+        self.eat("sym", "}")
+        return N.EnumDecl(name, variants, kw.line)
+
+    def parse_variant(self) -> N.Variant:
+        t = self.eat("ident")
+        fields = []
+        if self.accept("sym", "("):
+            if not self.at("sym", ")"):
+                fields.append(self.parse_type())
+                while self.accept("sym", ","):
+                    fields.append(self.parse_type())
+            self.eat("sym", ")")
+        return N.Variant(t.value, fields, t.line)
 
     # --- declarations ------------------------------------------------------ #
     def parse_alias(self) -> N.TypeAlias:
@@ -274,7 +300,35 @@ class Parser:
             return self.parse_if()
         if self.at("kw", "handle"):
             return self.parse_handle()
+        if self.at("kw", "match"):
+            return self.parse_match()
         return self._logic_or()
+
+    def parse_match(self) -> N.Match:
+        kw = self.eat("kw", "match")
+        scrutinee = self.parse_expr()
+        self.eat("sym", "{")
+        arms = [self.parse_arm()]
+        while self.accept("sym", ","):
+            if self.at("sym", "}"):
+                break
+            arms.append(self.parse_arm())
+        self.eat("sym", "}")
+        return N.Match(scrutinee, arms, kw.line)
+
+    def parse_arm(self) -> N.MatchArm:
+        t = self.eat("ident")
+        ctor = None if t.value == "_" else t.value
+        binders = []
+        if ctor is not None and self.accept("sym", "("):
+            if not self.at("sym", ")"):
+                binders.append(self.eat("ident").value)
+                while self.accept("sym", ","):
+                    binders.append(self.eat("ident").value)
+            self.eat("sym", ")")
+        self.eat("sym", "=>")
+        body = self.parse_expr()
+        return N.MatchArm(ctor, binders, body, t.line)
 
     def parse_if(self) -> N.If:
         kw = self.eat("kw", "if")

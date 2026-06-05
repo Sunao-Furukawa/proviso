@@ -71,6 +71,18 @@ class Checker:
         self.aliases: Dict[str, N.TypeExpr] = {
             a.name: a.type for a in getattr(module, "aliases", [])
         }
+        # user-defined sum types (#6): enum registry + constructor signatures
+        self.enums: Dict[str, N.EnumDecl] = {e.name: e for e in getattr(module, "enums", [])}
+        self.enum_ctors: Dict[str, List[str]] = {}
+        self.ctors: Dict[str, FnType] = {}
+        self.ctor_enum: Dict[str, str] = {}
+        for e in self.enums.values():
+            self.enum_ctors[e.name] = [v.name for v in e.variants]
+            for v in e.variants:
+                fields = [(f"f{i}", self._sem_type(ft), False)
+                          for i, ft in enumerate(v.fields)]
+                self.ctors[v.name] = FnType(fields, T.DataType(e.name), [])
+                self.ctor_enum[v.name] = e.name
 
     # --- public ----------------------------------------------------------- #
     def run(self) -> Tuple[List[Diagnostic], List[Warning]]:
@@ -147,10 +159,15 @@ class Checker:
             return s
         if isinstance(e, N.Index):
             return self._collect_effects(e.arr, est) | self._collect_effects(e.idx, est)
+        if isinstance(e, N.Match):
+            s = self._collect_effects(e.scrutinee, est)
+            for arm in e.arms:
+                s |= self._collect_effects(arm.body, est)
+            return s
         return set()
 
     def lookup(self, name: str) -> Optional[FnType]:
-        return self.fns.get(name) or self.builtins.get(name)
+        return self.fns.get(name) or self.builtins.get(name) or self.ctors.get(name)
 
     def src_line(self, line: int) -> Optional[str]:
         if 1 <= line <= len(self.src_lines):
@@ -179,6 +196,8 @@ class Checker:
             return T.INT(te.refine.pred, te.refine.var)
         if te.name == "Array":
             return T.ARRAY
+        if te.name in self.enums:
+            return T.DataType(te.name)
         # Unknown base type name; treat as opaque gradual Int-ish for v1.
         return BaseType(te.name, Refinement.gradual())
 
@@ -250,7 +269,86 @@ class Checker:
             return T.ARRAY, eff
         if isinstance(e, N.Index):
             return self._infer_index(e, env)
+        if isinstance(e, N.Match):
+            return self._infer_match(e, env)
         raise TypeError(f"cannot infer {e!r}")
+
+    def _infer_match(self, e: N.Match, env: Env) -> Tuple[T.Type, Dict[str, int]]:
+        st, eff = self._infer(e.scrutinee, env)
+        enum_name = st.name if isinstance(st, T.DataType) else None
+        if enum_name is None or enum_name not in self.enums:
+            self.diags.append(Diagnostic(
+                code="type", title="match on a non-enum value",
+                line=e.line, expected="a value of an `enum` type", found=str(st),
+                why="`match` deconstructs user-defined sum types only.",
+                source_line=self.src_line(e.line),
+            ))
+            return T.UNIT, eff
+        covered: set = set()
+        has_wild = False
+        result_ty: Optional[T.Type] = None
+        for arm in e.arms:
+            arm_env = dict(env)
+            if arm.ctor is None:
+                has_wild = True
+            else:
+                sig = self.ctors.get(arm.ctor)
+                if sig is None or self.ctor_enum.get(arm.ctor) != enum_name:
+                    self.diags.append(Diagnostic(
+                        code="type", title=f"`{arm.ctor}` is not a constructor of {enum_name}",
+                        line=arm.line, expected=f"a constructor of {enum_name}",
+                        found=f"`{arm.ctor}`",
+                        why="each match arm must name a variant of the scrutinee's enum.",
+                        source_line=self.src_line(arm.line),
+                    ))
+                    continue
+                covered.add(arm.ctor)
+                if len(arm.binders) != len(sig.params):
+                    self.diags.append(Diagnostic(
+                        code="arity",
+                        title=f"`{arm.ctor}` binds {len(sig.params)} field(s)",
+                        line=arm.line, expected=f"{len(sig.params)} binder(s)",
+                        found=f"{len(arm.binders)}",
+                        why="the pattern must bind exactly the constructor's fields.",
+                        source_line=self.src_line(arm.line),
+                    ))
+                for bn, (_n, fty, _l) in zip(arm.binders, sig.params):
+                    arm_env[bn] = fty
+            bt, be = self._infer(arm.body, arm_env)
+            eff.update(be)
+            result_ty = bt if result_ty is None else self._join(result_ty, bt)
+        if not has_wild:
+            missing = [c for c in self.enum_ctors.get(enum_name, []) if c not in covered]
+            if missing:
+                self._non_exhaustive(e, enum_name, missing)
+        return (result_ty or T.UNIT), eff
+
+    def _non_exhaustive(self, e: N.Match, enum_name: str, missing: list) -> None:
+        ms = ", ".join(missing)
+        self.diags.append(Diagnostic(
+            code="non-exhaustive",
+            title=f"match on {enum_name} does not cover every case",
+            line=e.line,
+            expected=f"arms for all variants of {enum_name}",
+            found=f"missing: {ms}",
+            why=(f"{enum_name} has variants not handled here; at runtime such a value "
+                 f"would have no matching arm."),
+            counterexample=f"a value built with {missing[0]}(...) matches no arm",
+            choices=[
+                Choice(
+                    label="ADD the missing arms (handle each case)",
+                    explanation="Cover every variant so the match is total and the "
+                                "compiler can trust it.",
+                    edit=f"add arms: {'; '.join(m + '(...) => ...' for m in missing)}",
+                ),
+                Choice(
+                    label="ADD a wildcard `_` arm (catch-all)",
+                    explanation="Handle the rest uniformly if they share behaviour.",
+                    edit="_ => ...",
+                ),
+            ],
+            source_line=self.src_line(e.line),
+        ))
 
     def _infer_index(self, e: N.Index, env: Env) -> Tuple[T.Type, Dict[str, int]]:
         at, ae = self._infer(e.arr, env)
@@ -389,6 +487,14 @@ class Checker:
 
     # --- subtyping / consistency, the gradual core ------------------------ #
     def _check_assign(self, src: T.Type, dst: T.Type, line: int, context: str) -> None:
+        if isinstance(dst, T.DataType):
+            if not (isinstance(src, T.DataType) and src.name == dst.name):
+                self.diags.append(Diagnostic(
+                    code="type", title=f"{context}: expected {dst.name}, found {src}",
+                    line=line, expected=str(dst), found=str(src),
+                    why="enum types differ.", source_line=self.src_line(line),
+                ))
+            return
         # base-name mismatch is a hard, non-gradual error
         if isinstance(src, BaseType) and isinstance(dst, BaseType):
             if src.name != dst.name:
@@ -403,6 +509,16 @@ class Checker:
 
     def _check_arg(self, arg_ty: T.Type, param_ty: T.Type, arg: N.Expr,
                    fn: str, pname: str, env: Env, term_map: dict) -> None:
+        if isinstance(param_ty, T.DataType):
+            if not (isinstance(arg_ty, T.DataType) and arg_ty.name == param_ty.name):
+                self.diags.append(Diagnostic(
+                    code="type",
+                    title=f"argument `{pname}` of `{fn}`: expected {param_ty.name}, "
+                          f"found {arg_ty}",
+                    line=arg.line, expected=str(param_ty), found=str(arg_ty),
+                    why="enum types differ.", source_line=self.src_line(arg.line),
+                ))
+            return
         if isinstance(arg_ty, BaseType) and isinstance(param_ty, BaseType):
             if arg_ty.name != param_ty.name:
                 self.diags.append(Diagnostic(
@@ -673,6 +789,8 @@ class Checker:
 
     # --- helpers ---------------------------------------------------------- #
     def _join(self, a: T.Type, b: T.Type) -> T.Type:
+        if isinstance(a, T.DataType) and isinstance(b, T.DataType) and a.name == b.name:
+            return a
         if isinstance(a, BaseType) and isinstance(b, BaseType) and a.name == b.name:
             if a.name == "Int":
                 if a.refine.unknown or b.refine.unknown:

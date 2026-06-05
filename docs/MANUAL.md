@@ -128,9 +128,32 @@ fn clamp_high(x: Nat) -> Percent { ... }
 負値を渡せば、ちゃんと反例つきの `refine-conflict`（静的）や実行時チェック（gradual 経由）になります。
 v0.1 ではエイリアスは「裸の名前」として使ってください（`Nat{...}` のような追加精緻化は未対応）。
 
----
+### ユーザー定義型（enum）と match
 
-## 6. 精緻化（refinement）と述語
+`enum` で直和型（タグ付きヴァリアント）を定義します。単一ヴァリアントの enum は実質レコードです。
+
+```proviso
+enum Shape {
+  Circle(Int),
+  Rect(Int, Int)
+}
+```
+
+- **構築**: コンストラクタを関数のように呼びます — `Circle(10)`, `Rect(4, 5)`。
+- **分解**: `match` 式でヴァリアントごとにフィールドを束縛します。
+
+```proviso
+fn area(s: Shape) -> Int {
+  match s {
+    Circle(r)  => 3 * r * r,
+    Rect(w, h) => w * h
+  }
+}
+```
+
+- **網羅性**: チェッカは全ヴァリアントが網羅されているか検査します。漏れがあれば `non-exhaustive`
+  診断（不足アーム or ワイルドカード `_` の2択）を出します。
+- パターンは1段（`Ctor(変数...)` か `_`）。ネストパターン・`.field` 直接アクセスは未対応（分解は match で）。
 
 精緻化型の構文は `BaseType { 束縛変数 | 述語 }` です。述語は**束縛変数と整数定数だけ**から成る、
 線形整数算術の決定可能な断片です。
@@ -426,6 +449,7 @@ conflict[種類]: 見出し
 | `effect-leak` | 本体の効果を型が隠している | (A) 効果を宣言する / (B) handle で解消・操作を除去 |
 | `moved` | move 済みの linear 値を使用 | (A) borrow / (B) clone |
 | `bounds` | 配列添字が範囲内だと証明できない（恒偽） | (A) ガードする / (B) 添字を精緻化（依存型） |
+| `non-exhaustive` | `match` が一部のヴァリアントを網羅していない | (A) 不足アームを追加 / (B) ワイルドカード `_` を追加 |
 | `type` | 基本型の不一致（Int と Bool 等） | － |
 | `arity` | 引数の個数違い | － |
 | `unbound` | 未定義の名前・関数 | － |
@@ -444,8 +468,10 @@ conflict[種類]: 見出し
 ## 15. 文法リファレンス（EBNF）
 
 ```
-module    := (type_alias | fn_decl)*
+module    := (type_alias | enum_decl | fn_decl)*
 type_alias:= 'type' IDENT '=' type ';'?
+enum_decl := 'enum' IDENT '{' variant (',' variant)* ','? '}'
+variant   := IDENT ('(' type (',' type)* ')')?
 fn_decl   := 'fn' IDENT '(' params? ')' ('->' type)? ('!' eff_row)? block
 params    := param (',' param)*
 param     := 'linear'? IDENT ':' type
@@ -458,9 +484,11 @@ block     := '{' stmt* expr? '}'
 stmt      := 'let' 'linear'? IDENT (':' type)? '=' expr ';'
            | expr ';'
 
-expr      := if | handle | logic_or
+expr      := if | handle | match | logic_or
 if        := 'if' expr block ('else' (if | block))?
 handle    := 'handle' block 'catch' '(' IDENT ')' block
+match     := 'match' expr '{' arm (',' arm)* ','? '}'
+arm       := (IDENT ('(' IDENT (',' IDENT)* ')')? | '_') '=>' expr
 logic_or  := logic_and ('||' logic_and)*
 logic_and := comparison ('&&' comparison)*
 comparison:= additive (CMP additive)?               # 連鎖なし
@@ -497,12 +525,12 @@ v0.1 で**意図的に未対応**の事項（いずれも既知の拡張で、�
   （multi-shot）な効果ハンドラは `Exc`（例外）のみモデル化。効果多相（効果変数）も未対応。
 - 型エイリアスは「裸の名前」のみ（`Nat{...}` のような追加精緻化や、エイリアスのジェネリクスは未対応）。
 - 所有権は単純な linear-use 解析（直線コード＋`if`）。リージョン/ライフタイム推論なし。
-- 基本型は `Int`/`Bool`/`Unit`/`Array`（要素 Int）のみ。ユーザー定義型・ジェネリクス・文字列・浮動小数点なし。
-- 第一級関数・クロージャ・ラムダなし。呼び出しは名前付き関数のみ。
+- 基本型は `Int`/`Bool`/`Unit`/`Array`（要素 Int）＋ユーザー定義 `enum`。ジェネリクス・文字列・
+  浮動小数点なし。`enum` のパターンは1段（ネスト不可）、コンストラクタフィールドの実行時契約は未強制。
+- 第一級関数・クロージャ・ラムダなし。呼び出しは名前付き関数／コンストラクタのみ。
 - `return` 文なし（ブロック末尾式が値）。
 
-> 残りの要望: **#6** ユーザー定義型（レコード/直和）＋パターンマッチ、**#4** 第一級関数＋multi-shot
-> 効果ハンドラ＋効果多相（最難関）。これらは未実装です。
+> 残りの要望: **#4** 第一級関数＋**multi-shot** 効果ハンドラ＋効果多相（最難関）。未実装です。
 
 ---
 

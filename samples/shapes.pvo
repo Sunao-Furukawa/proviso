@@ -1,0 +1,22 @@
+# User-defined types (#6): `enum` sum types + `match`.
+# Constructors are called like functions (`Circle(10)`); `match` deconstructs them,
+# binding each variant's fields. The checker proves every case is covered.
+# (A single-variant enum is effectively a record.)
+
+enum Shape {
+  Circle(Int),
+  Rect(Int, Int)
+}
+
+fn area(s: Shape) -> Int {
+  match s {
+    Circle(r) => 3 * r * r,
+    Rect(w, h) => w * h
+  }
+}
+
+fn main() -> Int ! {IO} {
+  print(area(Circle(10)));   # 300
+  print(area(Rect(4, 5)));   # 20
+  area(Rect(2, 3))           # returns 6
+}

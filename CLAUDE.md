@@ -74,6 +74,11 @@ to runtime checks instead. Source files use the `.pvo` extension.
 - **#7 arrays**: `Array` (of Int), literals `[1, 2, 3]`, `len(a)`, indexing `a[i]` with the
   `0 <= i < len(a)` obligation handled by #5 (proven / runtime-checked / hard error). See
   `samples/arrays.pvo`.
+- **#6 user-defined types**: `enum Name { Ctor(T, ...), ... }` (single-variant = record).
+  Constructors are called like functions; `match e { Ctor(a, b) => ..., _ => ... }`
+  deconstructs. Exhaustiveness is checked and reported as a `non-exhaustive` dialogue
+  (add arms / add wildcard). Runtime value is `interp.Data(ctor, fields)`. See
+  `samples/shapes.pvo`, `examples/08_match.pvo`.
 
 ## Bounded scope (deliberate, documented in README.md)
 
@@ -81,9 +86,11 @@ Dependent refinements work but the only measure is `len`; array *length* is not 
 statically (so a literal index on a `let`-bound array is runtime-checked, not proven);
 no occurrence typing on `len(x)` guards yet. `Exc`-only resumable handlers; no effect
 polymorphism; no first-class functions; simple linear-use ownership; base types are
-`Int`/`Bool`/`Unit`/`Array(Int)`; aliases are bare names only.
+`Int`/`Bool`/`Unit`/`Array(Int)` plus user `enum`s; aliases are bare names only. Enum
+match patterns are one level deep (`Ctor(vars)` / `_`); no nested patterns, no `.field`
+access (use match), no runtime contract enforcement on constructor fields yet.
 
-Remaining requested work: **#6** user-defined types (records/sum) + pattern matching;
-**#4** first-class functions + multi-shot effect handlers + effect polymorphism (the
-largest). Other next steps: more measures; static array-length tracking; len-guard
-occurrence typing; strings.
+Remaining requested work: **#4** first-class functions + **multi-shot** effect handlers
+(user wants full multi-shot) + effect polymorphism — the largest, requires continuations
+in the tree-walker. Other next steps: more measures; static array-length tracking;
+len-guard occurrence typing; strings; nested patterns.

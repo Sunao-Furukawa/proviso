@@ -139,6 +139,9 @@ not an oversight):
   no runtime check; provably impossible → hard error with a counterexample; otherwise →
   gradual runtime check. But the only measure is `len`, array length isn't tracked
   statically, and there's no `len`-guard occurrence typing yet.
+- **User-defined types** — `enum`s with constructors and `match` (single-variant = record),
+  with exhaustiveness reported as a dialogue. Patterns are one level deep; no nested
+  patterns or field access yet. First-class functions / effect handlers (#4) are next.
 - **Effects** are labels with optional refinement parameters; first-class, fully resumable
   effect handlers (multi-shot continuations) are modeled only for `Exc` here.
 - **Ownership** uses a simple "any use moves; borrow/clone read" model over straight-line

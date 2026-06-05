@@ -60,9 +60,24 @@ class FnDecl:
 
 
 @dataclass
+class Variant:
+    name: str
+    fields: List[TypeExpr]
+    line: int = 0
+
+
+@dataclass
+class EnumDecl:
+    name: str
+    variants: List[Variant]
+    line: int = 0
+
+
+@dataclass
 class Module:
     decls: List[FnDecl]
     aliases: List[TypeAlias] = field(default_factory=list)
+    enums: List[EnumDecl] = field(default_factory=list)
 
 
 # --- Statements ------------------------------------------------------------ #
@@ -153,6 +168,21 @@ class Handle(Expr):
     body: "Block"
     binder: str
     handler: "Block"
+    line: int = 0
+
+
+@dataclass
+class MatchArm:
+    ctor: Optional[str]            # constructor name, or None for the `_` wildcard
+    binders: List[str]             # field binders for the constructor's fields
+    body: Expr = None
+    line: int = 0
+
+
+@dataclass
+class Match(Expr):
+    scrutinee: Expr = None
+    arms: List[MatchArm] = field(default_factory=list)
     line: int = 0
 
 

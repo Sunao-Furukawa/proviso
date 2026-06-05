@@ -90,6 +90,20 @@ class OwnershipChecker:
         elif isinstance(e, N.Index):
             self._expr(e.arr)
             self._expr(e.idx)
+        elif isinstance(e, N.Match):
+            self._expr(e.scrutinee)
+            base = dict(self.moved)
+            merged = None
+            for arm in e.arms:
+                self.moved = dict(base)
+                self._expr(arm.body)
+                if merged is None:
+                    merged = dict(self.moved)
+                else:
+                    for k, v in self.moved.items():
+                        merged.setdefault(k, v)
+            if merged is not None:
+                self.moved = merged
         # literals: nothing
 
     # --- the rule --------------------------------------------------------- #

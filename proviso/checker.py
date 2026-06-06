@@ -519,7 +519,15 @@ class Checker:
             for ef in callee_ty.effects:
                 eff[ef.name] = e.line
             return callee_ty.ret, eff
-        if isinstance(callee_ty, BaseType) and callee_ty.name == "Fn":
+        if callee_ty is not None:
+            # `e.fn` names an in-scope binding whose type is not a precise arrow: a
+            # gradual `Fn` value, or -- crucially for algebraic effects -- a captured
+            # resumption `k` that has *escaped* its handler (stored in a let, returned,
+            # or pulled out of a match) and whose type a join has made gradual. We
+            # cannot see its arrow statically, so the call is gradual: thread the
+            # argument effects and defer the rest to the runtime. This is what lets the
+            # nested / cross-handler continuation machinery (fully supported by the
+            # interpreter) also type-check, rather than tripping "unknown function".
             eff = {}
             for a in e.args:
                 _at, ae = self._infer(a, env)

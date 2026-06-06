@@ -1,0 +1,25 @@
+# ── #1 nested, cross-handler algebraic effects ────────────────────────────
+# Two handlers, two effects, threaded across both boundaries AND across a function
+# call. `Pick` is resolved by the OUTER handler; `Tag` by the INNER one, which is
+# multi-shot (it resumes twice). The resumption captured at each `perform` flows
+# cleanly through the intervening handler and back into `body` -- the interpreter
+# always supported this; the generalization is that the checker now accepts it (a
+# captured/escaping continuation is callable), instead of rejecting the resume.
+#
+#   Pick -> 7;  then Tag(7) resumes with 7 and with 107:  7 + 107 = 114.
+
+fn body() -> Int {
+  let a = perform Pick(0);     # handled by the outer handler
+  let b = perform Tag(a);      # handled by the inner handler (resumed twice)
+  b
+}
+
+fn main() -> Int ! {IO} {
+  let total = handle {
+    handle {
+      body()
+    } with { Tag(x, k) => k(x) + k(x + 100), return(v) => v }
+  } with { Pick(x, k) => k(7), return(v) => v };
+  print(total);                # 114
+  total
+}

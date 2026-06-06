@@ -640,6 +640,40 @@ _buf.seek(0)
 check("framing round-trips", lsp.read_message(_buf) == {"jsonrpc": "2.0", "id": 9,
                                                         "result": {"ok": True}})
 
+# --- #1: nested / cross-handler effects + escaping continuations ------------- #
+print("nested cross-handler effects:")
+# a continuation that ESCAPES its handler (yielded, bound, called later) type-checks
+_esc = ("fn main() -> Int { let r = handle { let x = perform P(0); x + 1 } "
+        "with { P(p, k) => k, return(v) => v }; r(5) }\n")
+check("escaped continuation call type-checks", codes(analyze_src(_esc)[0]) == [],
+      codes(analyze_src(_esc)[0]))
+check("escaped continuation resumes (r(5) -> 6)", run_src(_esc)[0] == 6, run_src(_esc)[0])
+
+# calling a genuinely unknown name is still a hard error
+check("unknown name is still an error",
+      codes(analyze_src("fn main() -> Int { nope(0) }\n")[0]) == ["unbound"],
+      codes(analyze_src("fn main() -> Int { nope(0) }\n")[0]))
+
+# nested, cross-handler, multi-shot, across a function-call boundary -- the example
+_nest = open(os.path.join(EX, "13_continuations.pvo"), encoding="utf-8-sig").read()
+check("nested cross-handler example type-checks", codes(analyze_src(_nest)[0]) == [],
+      codes(analyze_src(_nest)[0]))
+r, o = run_src(_nest)
+check("nested cross-handler runs -> 114", r == 114 and o == ["114"], (r, o))
+
+# multi-shot resumption that crosses a function-call boundary
+_fb = ("fn worker(n: Int) -> Int { let r = perform Choose(0); n * r }\n"
+       "fn main() -> Int { handle { worker(10) } "
+       "with { Choose(x, k) => k(2) + k(3), return(v) => v } }\n")
+check("multishot across a call boundary -> 50", run_src(_fb)[0] == 50, run_src(_fb)[0])
+
+# the escaping-continuation sample type-checks and runs
+_cs = open(os.path.join(SAMPLES, "continuations.pvo"), encoding="utf-8-sig").read()
+check("continuations sample type-checks clean", codes(analyze_src(_cs)[0]) == [],
+      codes(analyze_src(_cs)[0]))
+r, o = run_src(_cs)
+check("continuations sample runs -> 42 with [20]", r == 42 and o == ["20"], (r, o))
+
 print()
 print(f"{_passed} passed, {_failed} failed")
 sys.exit(1 if _failed else 0)

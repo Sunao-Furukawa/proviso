@@ -1,0 +1,20 @@
+# First-class, *escaping* continuations (#1). A captured resumption `k` is an
+# ordinary value: a handler can hand it back, you can bind it, and you can invoke it
+# later -- outside the `handle` that produced it, and more than once. The interpreter
+# has always supported this (the continuation closes over its whole delimited
+# context); the generalization here is that the checker accepts it too -- calling an
+# escaped continuation is a gradual call, deferred to the runtime rather than tripping
+# "unknown function". The same machinery underlies nested and cross-handler effects.
+
+fn main() -> Int ! {IO} {
+  # `Pause` suspends the body and hands the resumption out through the handler.
+  let resume = handle {
+    let x = perform Pause(0);
+    x + x                       # doubles whatever we resume with
+  } with {
+    Pause(p, k) => k,           # escape: yield the continuation itself
+    return(v) => v
+  };
+  print(resume(10));            # resume the suspended body with 10 -> 20
+  resume(21)                    # resume again (multi-shot) with 21    -> 42
+}

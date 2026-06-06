@@ -38,6 +38,7 @@ python -m proviso check examples/04_effects.pvo      # effect leak + dependent r
 python -m proviso check examples/05_ownership.pvo    # use-after-move, explained with a path
 python -m proviso run   examples/06_gradual_cast.pvo # gradual seam: deferred runtime check
 python -m proviso check examples/12_typestate.pvo    # typestate: an op called in the wrong state
+python -m proviso run   examples/13_continuations.pvo # nested, cross-handler algebraic effects
 python -m proviso lsp                                 # language server (stdio) for your editor
 python tests/run_tests.py
 ```
@@ -174,8 +175,11 @@ not an oversight):
   effect-inferred signature.
 - **Trampolined evaluator** — the CPS interpreter returns thunks driven by a loop, so deep
   recursion (e.g. `sumto(100000)`) stays flat instead of overflowing the Python stack.
-- **Effects** are labels with optional refinement parameters; first-class, fully resumable
-  effect handlers (multi-shot continuations) are modeled only for `Exc` here.
+- **Algebraic effects** compose without restriction: handlers **nest**, an effect performed
+  inside a called function is caught by the caller's handler, resumptions are **multi-shot**,
+  and a captured continuation may **escape** its handler (be bound, returned, or stored) and
+  be invoked later — calling such a continuation type-checks as a gradual call. See
+  `samples/continuations.pvo` / `examples/13_continuations.pvo`.
 - **Ownership** uses a simple "any use moves; borrow/clone read" model over straight-line
   code and `if`; no region/lifetime inference yet.
 - Only `Int`/`Bool`/`Unit`; no user types, generics, or strings.

@@ -100,6 +100,18 @@ to runtime checks instead. Source files use the `.pvo` extension.
   labels: `perform Op` adds effect `Op`; `handle...with` discharges handled ops.
   Effect polymorphism is gradual: calling a `Fn` value contributes no static effects.
   See `samples/multishot.pvo`, `samples/hof.pvo`, `examples/09_effect_leak.pvo`.
+- **#1 nested / cross-handler effects + escaping continuations [DONE]**: the interpreter
+  was already fully general (nested handlers, effects crossing function-call boundaries,
+  multi-shot resumptions, and continuations that *escape* their handler -- the captured
+  `k` closes over its whole delimited context, and `below = h[:i]` in `_perform` is
+  exactly the handler's install-time stack, so resumptions re-install the right handlers).
+  The only gap was the **checker**: calling a captured continuation that had escaped (bound
+  in a `let`, returned, pulled from a `match`) and whose type a join had made gradual was
+  rejected as "unknown function". Fix: in `_infer_call`, calling *any in-scope binding*
+  whose type is not a precise arrow is a **gradual call** (thread arg effects, defer the
+  rest to the runtime) -- the gradual thesis applied to first-class continuations. A
+  genuinely unbound name is still a hard error. See `samples/continuations.pvo`,
+  `examples/13_continuations.pvo`.
 
 ## Bounded scope (deliberate, documented in README.md)
 
@@ -176,7 +188,8 @@ the checker), the interpreter checks everything (sound fallback). Tests `run_src
 `run_counting` run the checker first so erasure is active. See `samples/erasure.pvo`.
 
 Roadmap (all DONE): #5b len-guard -> #4 array-length -> #3 more measures (abs/min/max) ->
-#8 erasure+blame -> #2 precise function-arg subtyping -> #9 typestate -> #10 LSP.
-Deferred: #1 nested cross-handler algebraic-effect generalization (high risk). Also:
+#8 erasure+blame -> #2 precise function-arg subtyping -> #9 typestate -> #10 LSP ->
+#1 nested cross-handler effects + escaping continuations. Remaining ideas:
 nested-pattern exhaustiveness; typestate runtime enforcement (currently static-only);
-LSP incremental sync + go-to-definition.
+LSP incremental sync + go-to-definition; precise (non-gradual) types for escaped
+continuations.

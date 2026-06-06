@@ -148,7 +148,7 @@ class LspServer:
                     "textDocumentSync": 1,   # 1 = full document sync
                     "hoverProvider": True,
                 },
-                "serverInfo": {"name": "proviso-lsp", "version": "0.1.0"},
+                "serverInfo": {"name": "proviso-lsp", "version": "1.0.0"},
             })]
         if method == "shutdown":
             return [self._respond(mid, None)]

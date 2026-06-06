@@ -3,6 +3,8 @@
 > A language whose type system you can **pay for gradually** — and that argues with
 > you as a collaborator, not an adversary.
 
+**Version 1.0.0.** Full language reference and tutorial: **[MANUAL.md](MANUAL.md)**.
+
 Proviso is a working prototype of the design you sketched: a small language built around
 "correctness you can pay for in stages." It is a real lexer → parser → gradual dependent
 type & effect checker → trampolined CPS interpreter (multi-shot effect handlers), plus the part that matters most — a
@@ -21,9 +23,11 @@ proviso/
   types.py        semantic types, refinements (a pred, or ? for gradual), effect rows
   checker.py      gradual dependent type + effect checker  → emits Diagnostics
   ownership.py    ownership-as-effect (linear use) checker  → emits Diagnostics
+  typestate.py    protocol/typestate state-tracking checker → emits Diagnostics
   diagnostics.py  the dialogue: required/known/why/counterexample/two-choices
   interp.py       interpreter; refinements double as runtime contracts
-  cli.py          `proviso check` / `proviso run`
+  lsp.py          dependency-free language server (stdio): diagnostics + hover
+  cli.py          `proviso check` / `proviso run` / `proviso lsp`
 examples/         one file per axis, including the showcase conflict
 tests/run_tests.py
 ```

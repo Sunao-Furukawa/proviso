@@ -2,6 +2,8 @@
 
 **Version 1.0.0**
 
+*(日本語版: [MANUAL.ja.md](MANUAL.ja.md))*
+
 Proviso is an experimental programming language built around one idea: **correctness you
 can pay for gradually**. A type's refinement is either a *predicate* you have proven, or
 `?` (*unknown*) — and the two live side by side. Where you write `?`, the language inserts

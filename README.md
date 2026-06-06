@@ -3,7 +3,8 @@
 > A language whose type system you can **pay for gradually** — and that argues with
 > you as a collaborator, not an adversary.
 
-**Version 1.0.0.** Full language reference and tutorial: **[MANUAL.md](MANUAL.md)**.
+**Version 1.0.0.** Full language reference and tutorial: **[MANUAL.md](MANUAL.md)**
+(日本語版: **[MANUAL.ja.md](MANUAL.ja.md)**).
 
 Proviso is a working prototype of the design you sketched: a small language built around
 "correctness you can pay for in stages." It is a real lexer → parser → gradual dependent

@@ -150,6 +150,28 @@ class TArith(Term):
         return f"({self.a} {self.op} {self.b})"
 
 
+# Measures: integer-valued functions usable inside refinements (#3). `len(x)` is
+# the structural measure on arrays/strings (its own TLen node); these are the
+# arithmetic measures, total and decidable in linear integer arithmetic, so an
+# obligation mentioning them is statically provable / refutable just like any
+# other. `abs(t)`, `min(a, b)`, `max(a, b)`.
+MEASURE_ARITY = {"abs": 1, "min": 2, "max": 2}
+_MEASURES = {
+    "abs": lambda vs: abs(vs[0]),
+    "min": lambda vs: min(vs),
+    "max": lambda vs: max(vs),
+}
+
+
+@dataclass(frozen=True)
+class TMeasure(Term):
+    name: str    # one of MEASURE_ARITY
+    args: tuple  # tuple of Term
+
+    def __str__(self) -> str:
+        return f"{self.name}({', '.join(str(a) for a in self.args)})"
+
+
 @dataclass(frozen=True)
 class PRel(Pred):
     """A comparison between two terms (the general, possibly-dependent atom)."""
@@ -189,6 +211,9 @@ def _term_names(t: Term, out: set) -> None:
     elif isinstance(t, TArith):
         _term_names(t.a, out)
         _term_names(t.b, out)
+    elif isinstance(t, TMeasure):
+        for a in t.args:
+            _term_names(a, out)
 
 
 def render(pred: Pred, var: str) -> str:
@@ -221,6 +246,8 @@ def eval_term(t: Term, x: int, env: dict) -> int:
     if isinstance(t, TArith):
         a, b = eval_term(t.a, x, env), eval_term(t.b, x, env)
         return {"+": a + b, "-": a - b, "*": a * b}[t.op]
+    if isinstance(t, TMeasure):
+        return _MEASURES[t.name]([eval_term(a, x, env) for a in t.args])
     raise TypeError(f"unknown term node: {t!r}")
 
 
@@ -264,6 +291,8 @@ def _subst_value_t(t: Term, term: Term) -> Term:
         return term
     if isinstance(t, TArith):
         return TArith(t.op, _subst_value_t(t.a, term), _subst_value_t(t.b, term))
+    if isinstance(t, TMeasure):
+        return TMeasure(t.name, tuple(_subst_value_t(a, term) for a in t.args))
     return t
 
 
@@ -289,6 +318,8 @@ def _rename_t(t: Term, mapping: dict) -> Term:
         return TLen(mapping.get(t.name, t.name))
     if isinstance(t, TArith):
         return TArith(t.op, _rename_t(t.a, mapping), _rename_t(t.b, mapping))
+    if isinstance(t, TMeasure):
+        return TMeasure(t.name, tuple(_rename_t(a, mapping) for a in t.args))
     return t
 
 
@@ -321,17 +352,34 @@ def _subst_names_t(t: Term, term_map: dict) -> Term:
         return t
     if isinstance(t, TArith):
         return TArith(t.op, _subst_names_t(t.a, term_map), _subst_names_t(t.b, term_map))
+    if isinstance(t, TMeasure):
+        return TMeasure(t.name, tuple(_subst_names_t(a, term_map) for a in t.args))
     return t
 
 
 def _constants(p: Pred, out: Set[int]) -> None:
     if isinstance(p, PCmp):
         out.add(p.const)
+    elif isinstance(p, PRel):
+        _term_constants(p.lhs, out)
+        _term_constants(p.rhs, out)
     elif isinstance(p, (PAnd, POr)):
         _constants(p.a, out)
         _constants(p.b, out)
     elif isinstance(p, PNot):
         _constants(p.a, out)
+
+
+def _term_constants(t: Term, out: Set[int]) -> None:
+    """Integer constants buried in a term -- breakpoints the sampler should test."""
+    if isinstance(t, TInt):
+        out.add(t.k)
+    elif isinstance(t, TArith):
+        _term_constants(t.a, out)
+        _term_constants(t.b, out)
+    elif isinstance(t, TMeasure):
+        for a in t.args:
+            _term_constants(a, out)
 
 
 def _candidate_points(preds: List[Pred]) -> List[int]:
@@ -367,7 +415,30 @@ def _sampler_witness(p: Pred) -> Optional[int]:
 
 
 # --- Z3 backend -------------------------------------------------------------- #
+def _z3_measure(name: str, zs: list):
+    """Lower a measure application to a z3 expression (linear-arithmetic encoding)."""
+    if name == "abs":
+        return _z3.If(zs[0] >= 0, zs[0], -zs[0])
+    if name == "min":
+        return _z3.If(zs[0] <= zs[1], zs[0], zs[1])
+    if name == "max":
+        return _z3.If(zs[0] >= zs[1], zs[0], zs[1])
+    raise TypeError(f"unknown measure: {name}")
+
+
 def _to_z3(p: Pred, v):
+    def tz(t: Term):
+        if isinstance(t, TVal):
+            return v
+        if isinstance(t, TInt):
+            return t.k
+        if isinstance(t, TArith):
+            a, b = tz(t.a), tz(t.b)
+            return {"+": a + b, "-": a - b, "*": a * b}[t.op]
+        if isinstance(t, TMeasure):
+            return _z3_measure(t.name, [tz(a) for a in t.args])
+        raise TypeError(f"non-closed term in single-value predicate: {t!r}")
+
     if isinstance(p, PTrue):
         return _z3.BoolVal(True)
     if isinstance(p, PFalse):
@@ -378,6 +449,8 @@ def _to_z3(p: Pred, v):
             "<": v < c, "<=": v <= c, ">": v > c, ">=": v >= c,
             "==": v == c, "!=": v != c,
         }[p.op]
+    if isinstance(p, PRel):
+        return _rel(tz(p.lhs), p.op, tz(p.rhs))
     if isinstance(p, PAnd):
         return _z3.And(_to_z3(p.a, v), _to_z3(p.b, v))
     if isinstance(p, POr):
@@ -443,6 +516,8 @@ def z3_discharge(assumptions: "list[Pred]", goal: Pred):
         if isinstance(t, TArith):
             a, b = tz(t.a), tz(t.b)
             return {"+": a + b, "-": a - b, "*": a * b}[t.op]
+        if isinstance(t, TMeasure):
+            return _z3_measure(t.name, [tz(a) for a in t.args])
         raise TypeError(t)
 
     def pz(p: Pred):
@@ -512,6 +587,8 @@ def z3_consistent(preds: "list[Pred]") -> bool:
         if isinstance(t, TArith):
             a, b = tz(t.a), tz(t.b)
             return {"+": a + b, "-": a - b, "*": a * b}[t.op]
+        if isinstance(t, TMeasure):
+            return _z3_measure(t.name, [tz(a) for a in t.args])
         raise TypeError(t)
 
     def pz(p: Pred):

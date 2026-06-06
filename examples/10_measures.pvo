@@ -1,0 +1,17 @@
+# ── #3 arithmetic measures: refinements beyond `len` ─────────────────────
+# A refinement may use the integer measures `abs`, `min`, and `max`, not just the
+# structural `len`. They live in linear integer arithmetic, so the SMT backend
+# proves or refutes an obligation that mentions them *exactly* -- and reports a
+# failure the same dialogue way: required / known / counterexample / two choices.
+#
+# `clamp` only accepts an `x` already inside [min(lo,hi), max(lo,hi)]. The call
+# below passes lo=2, hi=8, x=99 -- outside [2, 8] -- so the solver hands back the
+# concrete counterexample 99 and offers to LOOSEN the bound or STRENGTHEN the source.
+
+fn clamp(lo: Int, hi: Int, x: Int{v | v >= min(lo, hi) && v <= max(lo, hi)}) -> Int {
+  x
+}
+
+fn main() -> Int {
+  clamp(2, 8, 99)
+}

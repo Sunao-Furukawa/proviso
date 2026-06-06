@@ -268,14 +268,33 @@ class Parser:
             return P.TInt(int(self.eat("int").value))
         if self.at("ident"):
             name = self.eat("ident").value
-            if name == "len" and self.at("sym", "("):
-                self.eat("sym", "(")
-                arg = self.eat("ident").value
-                self.eat("sym", ")")
-                return P.TLen(arg)
+            if self.at("sym", "("):
+                if name == "len":
+                    self.eat("sym", "(")
+                    arg = self.eat("ident").value
+                    self.eat("sym", ")")
+                    return P.TLen(arg)
+                if name in P.MEASURE_ARITY:
+                    return self._measure_term(name, var)
+                t = self.cur
+                raise ParseError(
+                    f"unknown measure `{name}` in refinement (known: len, "
+                    f"{', '.join(sorted(P.MEASURE_ARITY))})", t.line, t.col)
             return P.TVal() if name == var else P.TVar(name)
         t = self.cur
         raise ParseError(f"malformed refinement term near {t.value!r}", t.line, t.col)
+
+    def _measure_term(self, name: str, var: str) -> "P.Term":
+        open_t = self.eat("sym", "(")
+        args = [self._term(var)]
+        while self.accept("sym", ","):
+            args.append(self._term(var))
+        self.eat("sym", ")")
+        arity = P.MEASURE_ARITY[name]
+        if len(args) != arity:
+            raise ParseError(f"`{name}` takes {arity} argument(s), got {len(args)}",
+                             open_t.line, open_t.col)
+        return P.TMeasure(name, tuple(args))
 
     def _eat_cmp(self) -> str:
         t = self.cur

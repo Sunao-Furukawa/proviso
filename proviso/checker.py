@@ -281,7 +281,9 @@ class Checker:
             ty, eff = self._infer(e.operand, env)
             if e.op == "!":
                 return T.BOOL, eff
-            return T.INT(), eff  # negation: drop to gradual (sound)
+            if isinstance(e.operand, N.IntLit):  # `-k` is the singleton {value == -k}
+                return T.INT(P.PCmp("==", -e.operand.value)), eff
+            return T.INT(), eff  # other negation: drop to gradual (sound)
         if isinstance(e, N.BinOp):
             return self._infer_binop(e, env)
         if isinstance(e, N.Call):
@@ -613,6 +615,11 @@ class Checker:
         if (isinstance(e, N.Call) and e.fn == "len" and len(e.args) == 1
                 and isinstance(e.args[0], N.Var)):
             return P.TLen(e.args[0].name)
+        if (isinstance(e, N.Call) and e.fn in P.MEASURE_ARITY
+                and len(e.args) == P.MEASURE_ARITY[e.fn]):
+            ts = [self._expr_to_term(a) for a in e.args]
+            if all(t is not None for t in ts):
+                return P.TMeasure(e.fn, tuple(ts))
         if isinstance(e, N.BinOp) and e.op in ("+", "-", "*"):
             lt, rt = self._expr_to_term(e.left), self._expr_to_term(e.right)
             if lt is not None and rt is not None:
@@ -743,6 +750,11 @@ class Checker:
             return P.TInt(e.value)
         if isinstance(e, N.UnOp) and e.op == "-" and isinstance(e.operand, N.IntLit):
             return P.TInt(-e.operand.value)
+        if (isinstance(e, N.Call) and e.fn in P.MEASURE_ARITY
+                and len(e.args) == P.MEASURE_ARITY[e.fn]):
+            ts = [self._arg_term(a) for a in e.args]
+            if all(t is not None for t in ts):
+                return P.TMeasure(e.fn, tuple(ts))
         return None  # complex argument -> cannot name it symbolically
 
     def _assumptions(self, env: Env) -> list:

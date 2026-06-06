@@ -66,11 +66,19 @@ to runtime checks instead. Source files use the `.pvo` extension.
   (incl. `! {}`) is still an enforced contract. See `samples/infer_effects.pvo`.
 - **#5 dependent refinements**: refinement predicates may mention other in-scope variables
   and the `len(x)` measure (`hi: Int{h | h >= lo}`, `i: Int{k | k < len(xs)}`). Predicate
-  terms live in `predicate.py` (TVal/TInt/TVar/TLen/TArith, PRel). Call sites substitute
-  formal→actual terms and discharge via `z3_discharge`/`z3_consistent`: proven → no runtime
-  check; provably impossible → hard `refine-conflict`/`bounds` error with a counterexample;
-  otherwise → gradual runtime check. Runtime contracts evaluate the predicate with the full
-  arg environment. See `examples/07_dependent.pvo`.
+  terms live in `predicate.py` (TVal/TInt/TVar/TLen/TArith/TMeasure, PRel). Call sites
+  substitute formal→actual terms and discharge via `z3_discharge`/`z3_consistent`: proven →
+  no runtime check; provably impossible → hard `refine-conflict`/`bounds` error with a
+  counterexample; otherwise → gradual runtime check. Runtime contracts evaluate the predicate
+  with the full arg environment. See `examples/07_dependent.pvo`.
+- **#3 arithmetic measures**: besides the structural `len`, refinements may use the integer
+  measures `abs(t)`, `min(a, b)`, `max(a, b)` (`Int{n | abs(n) <= 3}`,
+  `Int{v | v >= min(lo, hi) && v <= max(lo, hi)}`). They are total and live in linear integer
+  arithmetic, so the same `z3_discharge` engine proves / refutes them and erasure (#8) applies;
+  the bundled sampler decides the single-value (`abs(value)…`) fragment too. `MEASURE_ARITY`
+  in `predicate.py` is the registry (TMeasure node); `_z3_measure` encodes them
+  (`abs`→`If(t>=0,t,-t)`, `min`/`max`→`If`). A negated int literal `-k` now carries the
+  singleton `{value == -k}` so `abs` proves on negative literals. See `samples/measures.pvo`.
 - **#7 arrays**: `Array` (of Int), literals `[1, 2, 3]`, `len(a)`, indexing `a[i]` with the
   `0 <= i < len(a)` obligation handled by #5 (proven / runtime-checked / hard error). See
   `samples/arrays.pvo`.
@@ -92,7 +100,8 @@ to runtime checks instead. Source files use the `.pvo` extension.
 
 ## Bounded scope (deliberate, documented in README.md)
 
-Dependent refinements work; the only measure is `len`. **len-guard occurrence typing (#5b)
+Dependent refinements work; the measures are `len` (structural) plus the arithmetic
+`abs`/`min`/`max` (#3). **len-guard occurrence typing (#5b)
 is implemented**: a guard like `if len(xs) > 0` / `if i < len(xs)` records a path fact
 (self.assumptions in the checker) so the guarded array access is statically proven (no
 runtime check). **Literal array length is tracked statically (#4)**: an array literal's type carries
@@ -130,7 +139,7 @@ the checker), the interpreter checks everything (sound fallback). Tests `run_src
 `run_counting` run the checker first so erasure is active. See `samples/erasure.pvo`.
 
 Roadmap (do in this order): #5b len-guard [DONE] -> #4 array-length [DONE] ->
-(#3 more measures) -> #8 erasure+blame [DONE] ->
+#3 more measures (abs/min/max) [DONE] -> #8 erasure+blame [DONE] ->
 #2 precise function-arg subtyping -> #9 typestate -> #10 LSP. Deferred: #1 nested
 cross-handler algebraic-effect generalization (high risk). Also: nested-pattern
 exhaustiveness.

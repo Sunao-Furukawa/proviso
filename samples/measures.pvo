@@ -1,0 +1,23 @@
+# Arithmetic measures in refinements (#3). Beyond the structural `len`, a
+# refinement may use the integer measures `abs`, `min`, and `max`. They are total
+# and live in linear integer arithmetic, so the SMT backend proves or refutes an
+# obligation that mentions them exactly -- and a proven one is *erased* (#8), so
+# every call below costs nothing at runtime.
+
+# `x` must lie inside the interval [min(lo, hi), max(lo, hi)] -- works no matter
+# which way round the two bounds are given.
+fn in_range(lo: Int, hi: Int, x: Int{v | v >= min(lo, hi) && v <= max(lo, hi)}) -> Int {
+  x
+}
+
+# A bounded step: its magnitude (abs) is at most 3.
+fn small_step(d: Int{n | abs(n) <= 3}) -> Int {
+  d
+}
+
+fn main() -> Int ! {IO} {
+  print(in_range(2, 8, 5));     # 5 in [2, 8]            -> proven
+  print(in_range(8, 2, 5));     # bounds reversed, still proven
+  print(small_step(-3));        # |-3| = 3 <= 3          -> proven
+  small_step(2)                 # |2|  = 2 <= 3 -> proven, returns 2
+}

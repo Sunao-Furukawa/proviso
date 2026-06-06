@@ -144,7 +144,9 @@ not an oversight):
   gradual runtime check. A guard like `if len(xs) > 0` / `if i < len(xs)` is understood
   (occurrence typing), so the guarded access is *proven*. A **literal array's length is
   tracked statically** (`[10,20,30]` has `len == 3`), so in-range indexing is proven and an
-  out-of-range literal index is a static error. The only measure is `len`; array length
+  out-of-range literal index is a static error. Measures are `len` (structural) plus the
+  arithmetic `abs`/`min`/`max` — e.g. `Int{n | abs(n) <= 3}` or
+  `Int{v | v >= min(lo, hi) && v <= max(lo, hi)}` (see `samples/measures.pvo`); array length
   passed through a function parameter is not tracked (the param is gradual).
 - **User-defined types** — `enum`s with constructors and `match` (single-variant = record),
   with exhaustiveness reported as a dialogue. Patterns **nest** (`Cons(a, Cons(b, rest))`)

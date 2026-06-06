@@ -428,6 +428,57 @@ except ProvisoCastError as ex:
     msg = str(ex)
 check("blame names the unproven call site", "blame" in msg and "line" in msg, msg)
 
+# --- #3: arithmetic measures (abs / min / max) ------------------------------ #
+print("arithmetic measures:")
+# abs on the bound value: proven for an in-range literal, refuted for an out-of-range one
+_a_ok = "fn s(d: Int{n | abs(n) <= 3}) -> Int { d }\nfn main() -> Int { s(-3) }\n"
+d, w = analyze_src(_a_ok)
+check("abs(-3) <= 3 is proven (erased)", d == [] and w == [], (codes(d), len(w)))
+d, _ = analyze_src("fn s(d: Int{n | abs(n) <= 3}) -> Int { d }\n"
+                   "fn main() -> Int { s(-5) }\n")
+check("abs(-5) <= 3 -> hard refine-conflict", codes(d) == ["refine-conflict"], codes(d))
+
+# min/max in a dependent refinement (mentions other params), order-independent
+_mm = ("fn in_range(lo: Int, hi: Int, "
+       "x: Int{v | v >= min(lo, hi) && v <= max(lo, hi)}) -> Int { x }\n")
+d, w = analyze_src(_mm + "fn main() -> Int { in_range(8, 2, 5) }\n")
+check("min/max range proven with reversed bounds", d == [] and w == [], (codes(d), len(w)))
+d, _ = analyze_src(_mm + "fn main() -> Int { in_range(2, 8, 99) }\n")
+check("out-of-[min,max] -> hard refine-conflict", codes(d) == ["refine-conflict"], codes(d))
+
+# a measure obligation reached through a parameter is gradual -> a runtime check that blames
+_mg = ("fn s(d: Int{n | abs(n) <= 3}) -> Int { d }\n"
+       "fn thru(y: Int) -> Int { s(y) }\nfn main() -> Int { thru(2) }\n")
+d, w = analyze_src(_mg)
+check("abs through a parameter is a gradual point", d == [] and len(w) == 1, (codes(d), len(w)))
+check("gradual abs check runs once and passes", run_counting(_mg) == 1, run_counting(_mg))
+msg = ""
+try:
+    run_src("fn s(d: Int{n | abs(n) <= 3}) -> Int { d }\n"
+            "fn thru(y: Int) -> Int { s(y) }\nfn main() -> Int { thru(9) }\n")
+except ProvisoCastError as ex:
+    msg = str(ex)
+check("failing abs contract blames + names the measure",
+      "blame" in msg and "abs(n) <= 3" in msg, msg)
+
+# the measures sample type-checks clean and runs with zero runtime checks (all proven)
+_ms = open(os.path.join(SAMPLES, "measures.pvo"), encoding="utf-8-sig").read()
+d, w = analyze_src(_ms)
+check("measures sample checks clean (no gradual points)", d == [] and w == [],
+      (codes(d), len(w)))
+r, o = run_src(_ms)
+check("measures sample runs -> 2 with [5, 5, -3]", r == 2 and o == ["5", "5", "-3"], (r, o))
+check("measures sample: 0 runtime checks (all erased)", run_counting(_ms) == 0,
+      run_counting(_ms))
+
+# malformed measure arity is a parse error
+_bad = "fn s(d: Int{n | abs(n, n) <= 3}) -> Int { d }\nfn main() -> Int { s(0) }\n"
+try:
+    proviso.parse(_bad)
+    check("wrong measure arity -> parse error", False, "no error")
+except Exception as ex:
+    check("wrong measure arity -> parse error", "abs" in str(ex), str(ex))
+
 print()
 print(f"{_passed} passed, {_failed} failed")
 sys.exit(1 if _failed else 0)

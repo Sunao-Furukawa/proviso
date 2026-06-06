@@ -526,6 +526,120 @@ check("fn_subtype sample checks clean", d == [] and w == [], (codes(d), len(w)))
 r, o = run_src(_fs)
 check("fn_subtype sample runs -> 8 with [42, 6]", r == 8 and o == ["42", "6"], (r, o))
 
+# --- #9: typestate ---------------------------------------------------------- #
+print("typestate:")
+def ts_codes(src):
+    m = proviso.parse(src)
+    return sorted(d.code for d in proviso.check_typestate(m, src))
+
+_PROTO = ("enum H { H(Int) }\nprotocol File { Closed, Open }\n"
+          "fn make() -> H @ Closed { H(0) }\n"
+          "fn open(f: H @ Closed) -> H @ Open { f }\n"
+          "fn read(f: H @ Open) -> H @ Open { f }\n"
+          "fn close(f: H @ Open) -> H @ Closed { f }\n")
+_ok = _PROTO + ("fn main() -> Int { let linear f = make(); let linear f = open(f); "
+                "let linear f = read(f); let linear f = close(f); 0 }\n")
+check("correct protocol sequence is clean", ts_codes(_ok) == [], ts_codes(_ok))
+
+_rbo = _PROTO + ("fn main() -> Int { let linear f = make(); let linear f = read(f); 0 }\n")
+check("read before open -> typestate error", ts_codes(_rbo) == ["typestate"], ts_codes(_rbo))
+
+_dc = _PROTO + ("fn main() -> Int { let linear f = make(); let linear f = open(f); "
+                "let linear f = close(f); let linear f = close(f); 0 }\n")
+check("double close -> typestate error", ts_codes(_dc) == ["typestate"], ts_codes(_dc))
+
+_ot = _PROTO + ("fn main() -> Int { let linear f = make(); let linear f = open(f); "
+                "let linear f = open(f); 0 }\n")
+check("open twice -> typestate error", ts_codes(_ot) == ["typestate"], ts_codes(_ot))
+
+# an un-annotated (unknown-state) resource is gradual -> accepted silently
+_grad = _PROTO + ("fn use_any(f: H) -> H { read(f) }\n"
+                  "fn main() -> Int { 0 }\n")
+check("unknown-state resource is gradual (no error)", ts_codes(_grad) == [], ts_codes(_grad))
+
+# the diagnostic carries states, a trace, and the two ways forward
+m = proviso.parse(_rbo)
+dd = proviso.check_typestate(m, _rbo)
+check("typestate diag: states + 2 choices + trace",
+      dd and dd[0].expected == "File @ Open" and dd[0].found == "File @ Closed"
+      and len(dd[0].choices) == 2 and "entered state" in (dd[0].counterexample or ""),
+      dd and (dd[0].expected, dd[0].found, len(dd[0].choices)))
+
+# the typestate sample checks clean (type + ownership + typestate) and runs
+_tsf = open(os.path.join(SAMPLES, "typestate.pvo"), encoding="utf-8-sig").read()
+d, w = analyze_src(_tsf)
+check("typestate sample: type+ownership clean", d == [], codes(d))
+check("typestate sample: no typestate violations", ts_codes(_tsf) == [], ts_codes(_tsf))
+r, o = run_src(_tsf)
+check("typestate sample runs -> 7", r == 7 and o == ["7"], (r, o))
+
+# the showcase example has exactly one typestate violation
+_ex12 = open(os.path.join(EX, "12_typestate.pvo"), encoding="utf-8-sig").read()
+check("example 12 is one typestate violation", ts_codes(_ex12) == ["typestate"], ts_codes(_ex12))
+
+# --- #10: language server (LSP) --------------------------------------------- #
+print("language server:")
+import io
+from proviso import lsp
+
+# a conflict surfaces as one Error (severity 1) diagnostic carrying the dialogue
+_cf = "fn f(x: Int{n|n>0}) -> Int { x }\nfn main() -> Int { f(0) }\n"
+ds = lsp.compute_diagnostics(_cf)
+check("conflict -> one Error diagnostic", len(ds) == 1 and ds[0]["severity"] == 1
+      and ds[0]["code"] == "refine-conflict", [(d["severity"], d["code"]) for d in ds])
+check("diagnostic message carries the dialogue",
+      "two ways forward" in ds[0]["message"] and "counterexample" in ds[0]["message"],
+      ds[0]["message"][:40])
+check("diagnostic range is on the failing line (0-based line 1)",
+      ds[0]["range"]["start"]["line"] == 1, ds[0]["range"])
+
+# a gradual point is a Warning (severity 2), not an error
+_gp = ("fn f(x: Int{n|n>0}) -> Int { x }\nfn g(y: Int) -> Int { f(y) }\n"
+       "fn main() -> Int { g(2) }\n")
+check("gradual point -> Warning severity",
+      [d["severity"] for d in lsp.compute_diagnostics(_gp)] == [2],
+      lsp.compute_diagnostics(_gp))
+# a clean program -> no diagnostics; a parse error -> exactly one
+check("clean program -> no diagnostics", lsp.compute_diagnostics("fn main()->Int{0}\n") == [])
+check("parse error -> one diagnostic", len(lsp.compute_diagnostics("fn f( {")) == 1)
+# a typestate violation surfaces through the same channel
+check("typestate violation surfaces in LSP diagnostics",
+      any(d["code"] == "typestate" for d in lsp.compute_diagnostics(_rbo)),
+      [d["code"] for d in lsp.compute_diagnostics(_rbo)])
+
+# hover reports the enclosing function's (effect-inferred) signature
+hv = lsp.hover_at("fn add(a: Int, b: Int) -> Int { a + b }\n"
+                  "fn main() -> Int ! {IO} { print(add(1,2)); 0 }\n", 1, 4)
+check("hover shows enclosing fn with inferred effects",
+      hv is not None and "fn main" in hv["contents"]["value"] and "{IO}" in hv["contents"]["value"],
+      hv)
+
+# server dispatch: initialize advertises capabilities; didOpen publishes diagnostics
+srv = lsp.LspServer()
+init = srv.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+caps = init[0]["result"]["capabilities"]
+check("initialize advertises hover + full sync",
+      caps["hoverProvider"] is True and caps["textDocumentSync"] == 1, caps)
+opened = srv.handle({"jsonrpc": "2.0", "method": "textDocument/didOpen",
+                     "params": {"textDocument": {"uri": "file:///t.pvo", "text": _cf}}})
+check("didOpen publishes diagnostics",
+      opened[0]["method"] == "textDocument/publishDiagnostics"
+      and len(opened[0]["params"]["diagnostics"]) == 1, opened[0]["method"])
+changed = srv.handle({"jsonrpc": "2.0", "method": "textDocument/didChange",
+                      "params": {"textDocument": {"uri": "file:///t.pvo"},
+                                 "contentChanges": [{"text": "fn main()->Int{0}\n"}]}})
+check("didChange re-publishes (now clean)",
+      changed[0]["params"]["diagnostics"] == [], changed[0]["params"]["diagnostics"])
+srv.handle({"jsonrpc": "2.0", "method": "exit"})
+check("exit stops the server loop", srv.running is False)
+
+# JSON-RPC Content-Length framing round-trips
+_buf = io.BytesIO()
+lsp.write_message(_buf, {"jsonrpc": "2.0", "id": 9, "result": {"ok": True}})
+_buf.seek(0)
+check("framing round-trips", lsp.read_message(_buf) == {"jsonrpc": "2.0", "id": 9,
+                                                        "result": {"ok": True}})
+
 print()
 print(f"{_passed} passed, {_failed} failed")
 sys.exit(1 if _failed else 0)

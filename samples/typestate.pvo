@@ -1,0 +1,34 @@
+# Typestate (#9): a resource's state, tracked through its type. A `protocol` names
+# the states a `File` moves through; each operation annotates the state it requires
+# and the one it produces with `@State`. The carrier is an ordinary value (here a
+# `Handle` record), so the program type-checks and runs -- `@State` is erased at
+# runtime; it only drives the static state-tracking pass.
+
+enum Handle { Handle(Int) }
+
+protocol File { Closed, Open }
+
+fn make() -> Handle @ Closed {
+  Handle(0)
+}
+
+fn open(f: Handle @ Closed) -> Handle @ Open {
+  f
+}
+
+fn read(f: Handle @ Open) -> Handle @ Open {
+  f
+}
+
+fn close(f: Handle @ Open) -> Handle @ Closed {
+  f
+}
+
+fn main() -> Int ! {IO} {
+  let linear f = make();     # File @ Closed
+  let linear f = open(f);    # Closed -> Open
+  let linear f = read(f);    # Open   -> Open  (still open)
+  let linear f = close(f);   # Open   -> Closed
+  print(7);
+  7
+}

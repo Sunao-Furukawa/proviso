@@ -10,11 +10,12 @@ from .parser import parse, ParseError
 from .lexer import LexError
 from .checker import check
 from .ownership import check_ownership
+from .typestate import check_typestate
 from .interp import run_module, ProvisoRuntimeError, ProvisoThrow
 
 __all__ = [
     "parse", "ParseError", "LexError",
-    "check", "check_ownership",
+    "check", "check_ownership", "check_typestate",
     "run_module", "ProvisoRuntimeError", "ProvisoThrow",
 ]
 

@@ -8,6 +8,7 @@ from .parser import parse, ParseError
 from .lexer import LexError
 from .checker import check
 from .ownership import check_ownership
+from .typestate import check_typestate
 from .interp import Interpreter, ProvisoRuntimeError, ProvisoThrow
 from .diagnostics import style, Diagnostic, Warning
 
@@ -24,7 +25,7 @@ def _read(path: str) -> str:
 def _analyze(src: str):
     module = parse(src)
     diags, warns = check(module, src)
-    diags = diags + check_ownership(module, src)
+    diags = diags + check_ownership(module, src) + check_typestate(module, src)
     diags.sort(key=lambda d: d.line)
     warns.sort(key=lambda w: w.line)
     return module, diags, warns
@@ -109,8 +110,11 @@ def main(argv: List[str] = None) -> int:
     except Exception:
         pass
     style.enabled = sys.stdout.isatty()
+    if argv and argv[0] == "lsp":  # language server over stdio (#10)
+        from .lsp import main as lsp_main
+        return lsp_main()
     if len(argv) < 2 or argv[0] not in ("check", "run"):
-        print("usage: proviso (check|run) <file.pvo>")
+        print("usage: proviso (check|run) <file.pvo> | proviso lsp")
         return 64
     cmd, path = argv[0], argv[1]
     return cmd_check(path) if cmd == "check" else cmd_run(path)

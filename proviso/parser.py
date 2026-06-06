@@ -79,14 +79,29 @@ class Parser:
         decls = []
         aliases = []
         enums = []
+        protocols = []
         while not self.at("eof"):
             if self.at("kw", "type"):
                 aliases.append(self.parse_alias())
             elif self.at("kw", "enum"):
                 enums.append(self.parse_enum())
+            elif self.at("kw", "protocol"):
+                protocols.append(self.parse_protocol())
             else:
                 decls.append(self.parse_fn())
-        return N.Module(decls, aliases, enums)
+        return N.Module(decls, aliases, enums, protocols)
+
+    def parse_protocol(self) -> N.ProtocolDecl:
+        kw = self.eat("kw", "protocol")
+        name = self.eat("ident").value
+        self.eat("sym", "{")
+        states = [self.eat("ident").value]
+        while self.accept("sym", ","):
+            if self.at("sym", "}"):
+                break
+            states.append(self.eat("ident").value)
+        self.eat("sym", "}")
+        return N.ProtocolDecl(name, states, kw.line)
 
     def parse_enum(self) -> N.EnumDecl:
         kw = self.eat("kw", "enum")
@@ -160,7 +175,10 @@ class Parser:
             self.eat("sym", "{")
             refine = self.parse_refine()
             self.eat("sym", "}")
-        return N.TypeExpr(t.value, refine, t.line)
+        state = None
+        if self.accept("sym", "@"):  # typestate (#9): `File @ Open`
+            state = self.eat("ident").value
+        return N.TypeExpr(t.value, refine, t.line, state)
 
     def parse_fn_type(self) -> N.FnTypeExpr:
         kw = self.eat("ident")  # Fn

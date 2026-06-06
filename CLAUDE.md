@@ -35,12 +35,14 @@ proviso/        the implementation (Python, no deps)
   types.py                          semantic types, refinements, effect rows
   checker.py                        gradual dependent type + effect checker -> Diagnostics
   ownership.py                      linear-use (ownership-as-effect) checker -> Diagnostics
+  typestate.py                      protocol/typestate state-tracking checker -> Diagnostics (#9)
   diagnostics.py                    the dialogue renderer
   interp.py                         tree-walking interpreter; refinements double as runtime contracts
-  cli.py __main__.py                `proviso check|run`
+  lsp.py                            stdio Language Server: diagnostics + hover (#10)
+  cli.py __main__.py                `proviso check|run|lsp`
 examples/   one .pvo per axis, incl. the showcase conflict and the gradual seam
 samples/    runnable programs (factorial, gcd, exceptions, relu, retry_budget, resource)
-tests/run_tests.py   16 dependency-free tests
+tests/run_tests.py   120 dependency-free tests
 ```
 
 ## How to run (from this folder)
@@ -48,7 +50,8 @@ tests/run_tests.py   16 dependency-free tests
 ```powershell
 python -m proviso run   samples\factorial.pvo      # type-checks, then runs
 python -m proviso check examples\03_conflict.pvo   # see the dialogue-style diagnostic
-python tests\run_tests.py                           # 16 tests
+python -m proviso lsp                               # language server over stdio (#10)
+python tests\run_tests.py                           # 120 tests
 ```
 
 `run` type-checks first and refuses to run on hard errors; gradual points (`?`) are deferred
@@ -140,6 +143,29 @@ deep recursion (e.g. sumto(100000), count(300000)) stays flat instead of overflo
 Python C stack. Handler boundaries / resumptions use nested `_drive` calls (one frame per
 active handler/resume, not per recursion level). Suite is 63 tests.
 
+**#9 typestate [DONE]**: `protocol Name { StateA, StateB }` (new top-level decl) names the
+states a resource moves through; an operation annotates the state it requires/produces with
+`@State` on a (real, runnable) carrier type -- `fn open(f: Handle @ Closed) -> Handle @ Open`.
+`typestate.py` (a pass like ownership.py, wired into cli `_analyze` and exported as
+`check_typestate`) walks each body tracking every binding's state (seeded from params and each
+op's result state, threaded through `let` re-binds, merged across `if`/`match`); a call on a
+provably-wrong state is a `typestate` dialogue (required/known state, the line it entered that
+state, and two choices: ADVANCE via the transition op, or STAY and use an op valid in the
+current state). State is gradual: an un-annotated / branch-merged-divergent binding is unknown
+and accepted silently. A state name maps back to its protocol (`state_proto`), so any carrier
+type works. `@State` is erased at runtime (TypeExpr.state; `@` token; `protocol` keyword).
+Lexer/parser/nodes carry it; the main checker ignores `.state` (protocol carrier types resolve
+as ordinary/opaque types). See `samples/typestate.pvo`, `examples/12_typestate.pvo`.
+
+**#10 LSP [DONE]**: `proviso lsp` runs a pure-Python (no deps) Language Server over stdio
+(`lsp.py`). JSON-RPC `Content-Length` framing (`read_message`/`write_message`); lifecycle
+(initialize/initialized/shutdown/exit); full-document sync (didOpen/didChange/didSave/didClose);
+`textDocument/publishDiagnostics` re-encodes the *same* Diagnostic/Warning objects the CLI
+renders (`compute_diagnostics` -> LSP dicts, severity Error/Warning, the dialogue in the
+message); `textDocument/hover` (`hover_at`) shows the enclosing function's effect-inferred
+signature. The core (`compute_diagnostics`, `hover_at`, `LspServer.handle` -> list of outgoing
+messages) is data-in/data-out for unit testing without real stdio.
+
 **#8 contract erasure + blame [DONE]**: the checker decides per call-site/index whether a
 refinement obligation is proven (erased) or gradual (checked); it annotates the AST
 (`Call.runtime_checks` = set of arg indices to check; `Index.needs_check` bool). The
@@ -149,8 +175,8 @@ note naming the unproven call site (line). If a node has no annotation (program 
 the checker), the interpreter checks everything (sound fallback). Tests `run_src`/
 `run_counting` run the checker first so erasure is active. See `samples/erasure.pvo`.
 
-Roadmap (do in this order): #5b len-guard [DONE] -> #4 array-length [DONE] ->
-#3 more measures (abs/min/max) [DONE] -> #8 erasure+blame [DONE] ->
-#2 precise function-arg subtyping [DONE] -> #9 typestate -> #10 LSP. Deferred: #1 nested
-cross-handler algebraic-effect generalization (high risk). Also: nested-pattern
-exhaustiveness.
+Roadmap (all DONE): #5b len-guard -> #4 array-length -> #3 more measures (abs/min/max) ->
+#8 erasure+blame -> #2 precise function-arg subtyping -> #9 typestate -> #10 LSP.
+Deferred: #1 nested cross-handler algebraic-effect generalization (high risk). Also:
+nested-pattern exhaustiveness; typestate runtime enforcement (currently static-only);
+LSP incremental sync + go-to-definition.

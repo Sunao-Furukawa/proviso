@@ -7,14 +7,14 @@ from typing import List
 KEYWORDS = {
     "fn", "let", "linear", "if", "else", "true", "false",
     "handle", "catch", "return", "type", "enum", "match",
-    "perform", "with",
+    "perform", "with", "protocol",
 }
 
 # Multi-character operators must be tried before single-character ones.
 _SYMBOLS = [
     "->", "=>", "==", "!=", "<=", ">=", "&&", "||",
     "(", ")", "{", "}", "[", "]", ",", ";", ":", "|", "!",
-    "+", "-", "*", "/", "%", "<", ">", "=", ".",
+    "+", "-", "*", "/", "%", "<", ">", "=", ".", "@",
 ]
 
 

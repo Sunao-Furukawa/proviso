@@ -1,0 +1,21 @@
+# ── #9 typestate: an operation called in the wrong state ──────────────────
+# A `File` moves Closed -> Open -> Closed. `read` is only valid while the file is
+# Open. Here `f` is freshly made (Closed) and `read` is called before `open`, so
+# Proviso rejects it -- naming the state `f` is in, where it entered that state, and
+# the two ways forward: ADVANCE it to `Open` (via `open`), or use an operation that
+# is valid in `Closed` (here, `open`). State is erased at runtime.
+
+enum Handle { Handle(Int) }
+
+protocol File { Closed, Open }
+
+fn make() -> Handle @ Closed { Handle(0) }
+fn open(f: Handle @ Closed) -> Handle @ Open { f }
+fn read(f: Handle @ Open) -> Handle @ Open { f }
+fn close(f: Handle @ Open) -> Handle @ Closed { f }
+
+fn main() -> Int {
+  let linear f = make();   # Closed
+  let linear f = read(f);  # !! read needs Open, but f is Closed
+  0
+}

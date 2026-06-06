@@ -22,6 +22,7 @@ class TypeExpr:
     name: str                              # Int, Bool, Unit
     refine: Optional[RefineExpr] = None    # None => gradual (plain `Int`)
     line: int = 0
+    state: Optional[str] = None            # typestate (#9): `File @ Open` -> state "Open"
 
 
 @dataclass
@@ -83,10 +84,21 @@ class EnumDecl:
 
 
 @dataclass
+class ProtocolDecl:
+    """A typestate protocol (#9): the named states a resource of this type moves
+    through, e.g. `protocol File { Closed, Open }`. Operations declare the state they
+    require / produce via `@State` annotations on their protocol-typed params/returns."""
+    name: str
+    states: List[str]
+    line: int = 0
+
+
+@dataclass
 class Module:
     decls: List[FnDecl]
     aliases: List[TypeAlias] = field(default_factory=list)
     enums: List[EnumDecl] = field(default_factory=list)
+    protocols: List[ProtocolDecl] = field(default_factory=list)
 
 
 # --- Statements ------------------------------------------------------------ #

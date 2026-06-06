@@ -666,7 +666,9 @@ gracefully degrade to gradual runtime checks.
 `Content-Length` framing). It supports document sync and publishes the *same* dialogue
 diagnostics the CLI renders (errors and gradual-point warnings), and answers
 `textDocument/hover` with the enclosing function's effect-inferred signature. Point any
-LSP-capable editor at the `proviso lsp` command for `.pvo` files.
+LSP-capable editor at the `proviso lsp` command for `.pvo` files. A ready-to-use **Visual
+Studio Code** client is in [`editors/vscode/`](editors/vscode/) — see its README for setup
+(`pip install -e .`, then run the extension and open a `.pvo` file).
 
 ---
 

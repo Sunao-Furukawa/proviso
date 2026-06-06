@@ -649,6 +649,9 @@ proviso lsp                # stdio 上の言語サーバ
 JSON-RPC)を話します。ドキュメント同期をサポートし、CLI と*同じ*対話的診断(エラーとグラデュ
 アル点の警告)を発行し、`textDocument/hover` で囲む関数の効果推論済みシグネチャを返します。
 `.pvo` ファイルに対して、LSP 対応エディタを `proviso lsp` コマンドに向けてください。
+すぐ使える **Visual Studio Code** 用クライアントが [`editors/vscode/`](editors/vscode/) に
+あります(セットアップはその README を参照: `pip install -e .` の後、拡張を起動して `.pvo`
+ファイルを開く)。
 
 ---
 

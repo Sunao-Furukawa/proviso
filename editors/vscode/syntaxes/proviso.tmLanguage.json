@@ -1,0 +1,101 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Proviso",
+  "scopeName": "source.proviso",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#declarations" },
+    { "include": "#keywords" },
+    { "include": "#constants" },
+    { "include": "#types" },
+    { "include": "#functions" },
+    { "include": "#constructors" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.number-sign.proviso", "match": "#.*$" }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.proviso",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        { "name": "constant.character.escape.proviso", "match": "\\\\." }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.function.proviso" },
+            "2": { "name": "entity.name.function.proviso" }
+          }
+        },
+        {
+          "match": "\\b(type|enum|protocol)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.proviso" },
+            "2": { "name": "entity.name.type.proviso" }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.proviso",
+          "match": "\\b(if|else|match|handle|catch|return|with|perform)\\b"
+        },
+        { "name": "storage.modifier.proviso", "match": "\\b(linear)\\b" },
+        {
+          "name": "keyword.declaration.proviso",
+          "match": "\\b(fn|let|type|enum|protocol)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        { "name": "constant.language.boolean.proviso", "match": "\\b(true|false)\\b" },
+        { "name": "constant.numeric.integer.proviso", "match": "\\b[0-9]+\\b" }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.proviso",
+          "match": "\\b(Int|Bool|Unit|Str|Array|Fn)\\b"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "entity.name.function.call.proviso",
+          "match": "\\b([a-z_][A-Za-z0-9_]*)\\s*(?=\\()"
+        }
+      ]
+    },
+    "constructors": {
+      "patterns": [
+        {
+          "comment": "Constructors, enum/protocol names, typestate states, effect labels",
+          "name": "entity.name.type.constructor.proviso",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.proviso",
+          "match": "->|=>|==|!=|<=|>=|&&|\\|\\||[-+*/%<>=!@|]"
+        }
+      ]
+    }
+  }
+}

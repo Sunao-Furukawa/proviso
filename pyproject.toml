@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "proviso"
+version = "1.0.0"
+description = "An experimental language whose type system you can pay for gradually."
+readme = "README.md"
+requires-python = ">=3.8"
+
+# The core language has no required dependencies. Z3 is an optional, faster solver
+# backend (the pure-Python sampler is used automatically when it is absent).
+[project.optional-dependencies]
+smt = ["z3-solver"]
+
+# Installing the package (e.g. `pip install -e .`) exposes a `proviso` command, so the
+# editor integration can launch `proviso lsp` (or `python -m proviso lsp`) from anywhere.
+[project.scripts]
+proviso = "proviso.cli:main"
+
+[tool.setuptools]
+packages = ["proviso"]

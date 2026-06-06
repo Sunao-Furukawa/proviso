@@ -1,0 +1,46 @@
+{
+  "name": "proviso",
+  "displayName": "Proviso",
+  "description": "Language support for Proviso (.pvo): live dialogue diagnostics and hover, powered by the Proviso language server.",
+  "version": "1.0.0",
+  "publisher": "proviso",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Programming Languages"],
+  "activationEvents": ["onLanguage:proviso"],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "proviso",
+        "aliases": ["Proviso"],
+        "extensions": [".pvo"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "proviso",
+        "scopeName": "source.proviso",
+        "path": "./syntaxes/proviso.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Proviso",
+      "properties": {
+        "proviso.pythonPath": {
+          "type": "string",
+          "default": "python",
+          "description": "Python interpreter used to launch `python -m proviso lsp`. Use a full path (or a venv's python) if `python` is not on PATH."
+        },
+        "proviso.serverCwd": {
+          "type": "string",
+          "default": "",
+          "description": "Working directory for the language server. Leave empty to use the first workspace folder. Set this to the Proviso repo root if you have NOT run `pip install -e .` (so that `python -m proviso lsp` can import the package)."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.0"
+  }
+}

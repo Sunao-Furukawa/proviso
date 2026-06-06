@@ -177,7 +177,8 @@ not an oversight):
   `samples/typestate.pvo` / `examples/12_typestate.pvo`.
 - **Editor support** — `proviso lsp` is a dependency-free Language Server (stdio) that
   publishes the dialogue diagnostics live and answers hover with the enclosing function's
-  effect-inferred signature.
+  effect-inferred signature. A ready-to-use VS Code client is in
+  [`editors/vscode/`](editors/vscode/) (setup in its README).
 - **Trampolined evaluator** — the CPS interpreter returns thunks driven by a loop, so deep
   recursion (e.g. `sumto(100000)`) stays flat instead of overflowing the Python stack.
 - **Algebraic effects** compose without restriction: handlers **nest**, an effect performed

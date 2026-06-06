@@ -12,4 +12,8 @@ dist/
 Thumbs.db
 *.swp
 .idea/
-.vscode/
+/.vscode/
+
+# VS Code extension build artifacts
+node_modules/
+*.vsix

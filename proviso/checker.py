@@ -699,16 +699,20 @@ class Checker:
                    fn: str, pname: str, env: Env, term_map: dict) -> bool:
         """Returns True if this argument needs a runtime contract check (gradual)."""
         if isinstance(param_ty, T.ArrowType):
-            ok = isinstance(arg_ty, T.ArrowType) or (
-                isinstance(arg_ty, BaseType) and arg_ty.name == "Fn")
-            if not ok:
-                self.diags.append(Diagnostic(
-                    code="type",
-                    title=f"argument `{pname}` of `{fn}`: expected a function, found {arg_ty}",
-                    line=arg.line, expected=str(param_ty), found=str(arg_ty),
-                    why="a function-typed parameter needs a function value.",
-                    source_line=self.src_line(arg.line),
-                ))
+            if isinstance(arg_ty, T.ArrowType):
+                # #2 precise function-arg subtyping: arg_ty <: param_ty, with
+                # contravariant parameters and a covariant result.
+                self._check_arrow_sub(arg_ty, param_ty, arg, fn, pname)
+                return False
+            if isinstance(arg_ty, BaseType) and arg_ty.name == "Fn":
+                return False  # a gradual `Fn` value -> accepted (cannot wrap at runtime)
+            self.diags.append(Diagnostic(
+                code="type",
+                title=f"argument `{pname}` of `{fn}`: expected a function, found {arg_ty}",
+                line=arg.line, expected=str(param_ty), found=str(arg_ty),
+                why="a function-typed parameter needs a function value.",
+                source_line=self.src_line(arg.line),
+            ))
             return False
         if isinstance(param_ty, T.DataType):
             if not (isinstance(arg_ty, T.DataType) and arg_ty.name == param_ty.name):
@@ -741,6 +745,91 @@ class Checker:
                                       context=f"argument `{pname}` of `{fn}`",
                                       param_name=pname, arg=arg)
         return False
+
+    # --- #2 precise function-arg subtyping -------------------------------- #
+    def _check_arrow_sub(self, src: T.ArrowType, dst: T.ArrowType, arg: N.Expr,
+                         fn: str, pname: str) -> None:
+        """Check `src <: dst` for function types: a value of arrow type `src` may be
+        used where `dst` is expected iff its parameters are *contravariant* (it accepts
+        at least what callers will pass) and its result is *covariant* (it returns at
+        most what callers expect). Effects must be a subset of the expected row."""
+        where = f"function `{pname}` (argument of `{fn}`)"
+        if len(src.params) != len(dst.params):
+            self.diags.append(Diagnostic(
+                code="arity",
+                title=f"argument `{pname}` of `{fn}`: function takes "
+                      f"{len(src.params)} parameter(s), but {len(dst.params)} expected",
+                line=arg.line, expected=str(dst), found=str(src),
+                why="a function argument must have the arity its parameter declares.",
+                source_line=self.src_line(arg.line),
+            ))
+            return
+        # parameters: contravariant -> expected param <: actual param
+        for i, (dp, sp) in enumerate(zip(dst.params, src.params)):
+            self._check_sub(dp, sp, arg, f"parameter {i + 1} of {where}")
+        # result: covariant -> actual result <: expected result
+        self._check_sub(src.ret, dst.ret, arg, f"result of {where}")
+        self._check_arrow_effects(src, dst, arg, fn, pname)
+
+    def _check_sub(self, src: T.Type, dst: T.Type, arg: N.Expr, role: str) -> None:
+        """`src <: dst` for a type in argument/result position. Gradual on either side
+        is accepted silently (the `?` is consistent with everything); only a provable
+        refinement conflict, a base-type clash, or an arity mismatch is reported."""
+        if isinstance(src, T.ArrowType) and isinstance(dst, T.ArrowType):
+            self._check_arrow_sub(src, dst, arg, role, role)  # nested, variance recurses
+            return
+        if isinstance(src, T.DataType) or isinstance(dst, T.DataType):
+            if not (isinstance(src, T.DataType) and isinstance(dst, T.DataType)
+                    and src.name == dst.name):
+                self._sub_type_clash(src, dst, arg, role)
+            return
+        if isinstance(src, BaseType) and isinstance(dst, BaseType):
+            if src.name != dst.name:
+                self._sub_type_clash(src, dst, arg, role)
+                return
+            # refinement subtyping: a `?` on either side defers (accepted); a dependent
+            # predicate has no call-site context here -> accepted; otherwise decide it.
+            if dst.refine.unknown or src.refine.unknown:
+                return
+            if P.is_dependent(dst.refine.pred) or P.is_dependent(src.refine.pred):
+                return
+            cx = P.implies(src.refine.pred, dst.refine.pred)
+            if cx is not None:
+                self.diags.append(self._refine_conflict(
+                    src, dst, arg.line, role, cx, param_name=None, arg=arg))
+            return
+        # mixed kinds (e.g. function vs base) -> a clash
+        if type(src) is not type(dst):
+            self._sub_type_clash(src, dst, arg, role)
+
+    def _sub_type_clash(self, src: T.Type, dst: T.Type, arg: N.Expr, role: str) -> None:
+        self.diags.append(Diagnostic(
+            code="type",
+            title=f"{role}: expected {dst}, found {src}",
+            line=arg.line, expected=str(dst), found=str(src),
+            why="the function argument's type does not match the expected signature.",
+            source_line=self.src_line(arg.line),
+        ))
+
+    def _check_arrow_effects(self, src: T.ArrowType, dst: T.ArrowType, arg: N.Expr,
+                             fn: str, pname: str) -> None:
+        """The argument function may perform only effects the expected row allows. An
+        effect *variable* in the expected row is polymorphic and absorbs any effect."""
+        if any(T.is_effect_var(ef.name) for ef in dst.effects):
+            return
+        allowed = {ef.name for ef in dst.effects}
+        leaked = sorted({ef.name for ef in src.effects
+                         if not T.is_effect_var(ef.name) and ef.name not in allowed})
+        if leaked:
+            self.diags.append(Diagnostic(
+                code="effect-leak",
+                title=f"argument `{pname}` of `{fn}`: function performs "
+                      f"{T.effects_str([Effect(n) for n in leaked])} not allowed by the "
+                      f"expected row {T.effects_str(dst.effects)}",
+                line=arg.line, expected=str(dst), found=str(src),
+                why="a function argument may perform only effects its parameter declares.",
+                source_line=self.src_line(arg.line),
+            ))
 
     # --- dependent-refinement machinery (#5) ------------------------------ #
     def _arg_term(self, e: N.Expr):

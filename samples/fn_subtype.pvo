@@ -1,0 +1,31 @@
+# Precise function-arg subtyping (#2). When a higher-order function declares a
+# precise arrow type for its function parameter, the function you pass is matched
+# by *subtyping*, not just "is it a function": contravariant in its parameters (it
+# must accept at least what will be fed to it) and covariant in its result (it must
+# return at most what is promised). Every pass below is proven, so it type-checks.
+
+# `run_nonneg` only ever feeds its callee a non-negative Int, so a callee that
+# accepts ANY Int is fine -- the parameter position is contravariant.
+fn run_nonneg(f: Fn(Int{n | n >= 0}) -> Int, x: Int{n | n >= 0}) -> Int {
+  f(x)
+}
+
+fn double(n: Int) -> Int {
+  n + n
+}
+
+# `demand_pos` promises its callee returns a strictly-positive Int; a callee that
+# returns `>= 1` satisfies that -- the result position is covariant.
+fn demand_pos(f: Fn(Int) -> Int{r | r > 0}, x: Int) -> Int {
+  f(x)
+}
+
+fn at_least_one(n: Int) -> Int{r | r >= 1} {
+  abs(n) + 1
+}
+
+fn main() -> Int ! {IO} {
+  print(run_nonneg(double, 21));        # double accepts any Int -> ok; prints 42
+  print(demand_pos(at_least_one, 5));   # result >= 1  <:  > 0  -> ok; prints 6
+  run_nonneg(double, 4)                 # returns 8
+}

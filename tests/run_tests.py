@@ -479,6 +479,53 @@ try:
 except Exception as ex:
     check("wrong measure arity -> parse error", "abs" in str(ex), str(ex))
 
+# --- #2: precise function-arg subtyping ------------------------------------- #
+print("precise function-arg subtyping:")
+_HO = "fn apply(f: Fn(Int{n|n>=0}) -> Int, x: Int{n|n>=0}) -> Int { f(x) }\n"
+# contravariant params: a callee that accepts ANY Int is fine where >=0 is fed
+d, _ = analyze_src(_HO + "fn g(n: Int) -> Int { n }\nfn main() -> Int { apply(g, 5) }\n")
+check("contravariant param accepts a more permissive callee", d == [], codes(d))
+# ...but a callee demanding more (n>0) than will be passed (n>=0) is rejected
+d, _ = analyze_src(_HO + "fn pos(n: Int{m|m>0}) -> Int { n }\n"
+                   "fn main() -> Int { apply(pos, 5) }\n")
+check("contravariant param: stricter callee -> refine-conflict",
+      codes(d) == ["refine-conflict"], codes(d))
+
+_RC = "fn want_pos(f: Fn(Int) -> Int{r|r>0}, x: Int) -> Int { f(x) }\n"
+# covariant result: a callee returning >=1 satisfies a promised >0
+d, _ = analyze_src(_RC + "fn p(n: Int) -> Int{r|r>=1} { abs(n)+1 }\n"
+                   "fn main() -> Int { want_pos(p, 5) }\n")
+check("covariant result accepts a tighter return", d == [], codes(d))
+# ...but a callee that may return 0 cannot satisfy a promised >0
+d, _ = analyze_src(_RC + "fn q(n: Int) -> Int{r|r>=0} { abs(n) }\n"
+                   "fn main() -> Int { want_pos(q, 5) }\n")
+check("covariant result: looser return -> refine-conflict",
+      codes(d) == ["refine-conflict"], codes(d))
+
+# arity, base-type clash, and effect leak on a function argument
+d, _ = analyze_src("fn ap(f: Fn(Int) -> Int, x: Int) -> Int { f(x) }\n"
+                   "fn two(a: Int, b: Int) -> Int { a+b }\nfn main() -> Int { ap(two, 1) }\n")
+check("function-arg arity mismatch -> arity error", codes(d) == ["arity"], codes(d))
+d, _ = analyze_src("fn ap(f: Fn(Int) -> Int, x: Int) -> Int { f(x) }\n"
+                   "fn nb(b: Bool) -> Int { 0 }\nfn main() -> Int { ap(nb, 1) }\n")
+check("function-arg base-type clash -> type error", codes(d) == ["type"], codes(d))
+d, _ = analyze_src("fn ap(f: Fn(Int) -> Int, x: Int) -> Int { f(x) }\n"
+                   "fn sh(n: Int) -> Int ! {IO} { print(n); n }\n"
+                   "fn main() -> Int ! {IO} { ap(sh, 1) }\n")
+check("function-arg effect leak -> effect-leak", codes(d) == ["effect-leak"], codes(d))
+# an effect *variable* in the expected row absorbs the argument's effects (no leak)
+d, _ = analyze_src("fn ap(f: Fn(Int) -> Int ! e, x: Int) -> Int ! e { f(x) }\n"
+                   "fn sh(n: Int) -> Int ! {IO} { print(n); n }\n"
+                   "fn main() -> Int ! {IO} { ap(sh, 1) }\n")
+check("effect-variable row absorbs an effectful callee", d == [], codes(d))
+
+# the subtyping sample type-checks clean and runs
+_fs = open(os.path.join(SAMPLES, "fn_subtype.pvo"), encoding="utf-8-sig").read()
+d, w = analyze_src(_fs)
+check("fn_subtype sample checks clean", d == [] and w == [], (codes(d), len(w)))
+r, o = run_src(_fs)
+check("fn_subtype sample runs -> 8 with [42, 6]", r == 8 and o == ["42", "6"], (r, o))
+
 print()
 print(f"{_passed} passed, {_failed} failed")
 sys.exit(1 if _failed else 0)

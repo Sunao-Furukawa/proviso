@@ -1,0 +1,18 @@
+# ── #2 precise function-arg subtyping: a function matched by subtyping ─────
+# `apply_nonneg` may feed its callee *any* non-negative Int. `only_positive`
+# refuses 0 (it demands n > 0), so it cannot stand in for a callee that must accept
+# every non-negative value. The parameter position is *contravariant*, so Proviso
+# rejects this with the usual dialogue: the counterexample is 0, and you can LOOSEN
+# what the callee demands or STRENGTHEN what the caller promises to pass.
+
+fn apply_nonneg(f: Fn(Int{n | n >= 0}) -> Int, x: Int{n | n >= 0}) -> Int {
+  f(x)
+}
+
+fn only_positive(n: Int{m | m > 0}) -> Int {
+  n
+}
+
+fn main() -> Int {
+  apply_nonneg(only_positive, 5)
+}

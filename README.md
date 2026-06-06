@@ -158,7 +158,10 @@ not an oversight):
   names are effect labels; handling discharges them. Function types can be gradual (`Fn`) or
   **precise** (`Fn(T) -> T ! e`) with **effect-variable polymorphism** — a higher-order
   function's effect row can be the variable `e`, instantiated at each call from the actual
-  function argument's effects (pure arg → `{}`, IO arg → `{IO}`).
+  function argument's effects (pure arg → `{}`, IO arg → `{IO}`). A precise function
+  parameter is matched by **subtyping**: contravariant parameters, a covariant result, and an
+  effect-subset check (refinement clashes use the same counterexample dialogue). See
+  `samples/fn_subtype.pvo` / `examples/11_fn_subtype.pvo`.
 - **Trampolined evaluator** — the CPS interpreter returns thunks driven by a loop, so deep
   recursion (e.g. `sumto(100000)`) stays flat instead of overflowing the Python stack.
 - **Effects** are labels with optional refinement parameters; first-class, fully resumable

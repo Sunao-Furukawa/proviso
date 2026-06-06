@@ -121,8 +121,19 @@ Plus **precise function types** `Fn(T, ...) -> T ! {effects}` (ArrowType, FnType
 **effect-variable polymorphism**: lowercase effect-row names are variables; a HOF's `! e` is
 instantiated at each call from the actual function argument's effects (substitution in
 _infer_call). Bare top-level fn names are function references (ArrowType / interp Closure).
-Bounded: function-arg subtyping is gradual (params/ret not strictly matched), single-level
-var instantiation, and the name-based effect-inference pass (#3) does not substitute vars.
+
+**#2 precise function-arg subtyping [DONE]**: when a parameter has a precise `ArrowType`, the
+function passed is matched by *subtyping* (`_check_arrow_sub` in checker.py): arity, then
+**contravariant** parameters (expected param `<:` actual param) and a **covariant** result
+(actual ret `<:` expected ret), recursing through nested arrows; the actual function's
+effects must be a subset of the expected row, except an effect *variable* there absorbs any.
+Refinement leaves reuse the `implies`/`_refine_conflict` dialogue (counterexample + LOOSEN/
+STRENGTHEN). Gradual on either side (a `?` refinement, a bare `Fn` value, a dependent
+predicate with no call-site context) is accepted silently -- we cannot wrap a closure to
+insert a runtime check, so only provable conflicts/clashes are hard errors. A negated int
+literal `-k` carries `{value == -k}`. See `samples/fn_subtype.pvo`, `examples/11_fn_subtype.pvo`.
+Bounded: single-level effect-var instantiation; the name-based effect-inference pass (#3) does
+not substitute vars; no runtime contract wrapping of function arguments.
 
 Plus **trampolining**: the CPS evaluator returns `_Thunk`s driven by `_drive` (a loop), so
 deep recursion (e.g. sumto(100000), count(300000)) stays flat instead of overflowing the
@@ -140,6 +151,6 @@ the checker), the interpreter checks everything (sound fallback). Tests `run_src
 
 Roadmap (do in this order): #5b len-guard [DONE] -> #4 array-length [DONE] ->
 #3 more measures (abs/min/max) [DONE] -> #8 erasure+blame [DONE] ->
-#2 precise function-arg subtyping -> #9 typestate -> #10 LSP. Deferred: #1 nested
+#2 precise function-arg subtyping [DONE] -> #9 typestate -> #10 LSP. Deferred: #1 nested
 cross-handler algebraic-effect generalization (high risk). Also: nested-pattern
 exhaustiveness.

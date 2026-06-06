@@ -124,6 +124,7 @@ class Interpreter:
         self.builtins = builtin_signatures()
         self.ctors = {v.name for e in getattr(module, "enums", []) for v in e.variants}
         self.output: List[str] = []
+        self.checks_performed = 0  # #8: counts runtime contract checks actually run
 
     def _sem_type(self, te: Optional[N.TypeExpr]) -> T.Type:
         # function types carry no runtime contract; treat as the gradual Fn marker
@@ -148,30 +149,38 @@ class Interpreter:
         return _drive(self.eval(e, env, _ID, h))
 
     # --- calls (trampolined CPS: k = continuation, h = handler stack) ----- #
-    def call_user(self, name, args, k, h):
+    # #8: `checks` is the set of parameter indices that need a runtime contract check
+    # (the gradual ones the checker could not prove). None => check all refined params
+    # (the sound fallback when the program was run without the checker). Proven
+    # contracts are *erased* -- they cost nothing at runtime.
+    def call_user(self, name, args, k, h, checks=None, blame=None):
         env: Dict[str, object] = {}
         for (pname, _pty), val in zip(self.fn_params[name], args):
             env[pname] = val
-        for (pname, pty), val in zip(self.fn_params[name], args):
-            self._enforce(pname, pty, val, env)
+        for idx, ((pname, pty), val) in enumerate(zip(self.fn_params[name], args)):
+            if checks is None or idx in checks:
+                self._enforce(pname, pty, val, env, blame, name)
         body = self.fns[name].body
         return _Thunk(lambda: self.eval(body, env, k, h))
 
-    def _enforce(self, pname: str, pty: T.Type, val, env: Dict[str, object]) -> None:
+    def _enforce(self, pname, pty, val, env, blame=None, fn=None) -> None:
         if isinstance(pty, T.BaseType) and pty.name == "Int" and not pty.refine.unknown:
+            self.checks_performed += 1
             if not P.eval_pred(pty.refine.pred, val, env):
+                where = f" of `{fn}`" if fn else ""
+                why = (f"  [blame: the call at line {blame} was not statically proven, "
+                       f"so this contract is checked here]") if blame else ""
                 raise ProvisoCastError(
-                    f"runtime refinement check failed for `{pname}`: value {val} "
-                    f"violates {{{pty.refine.var} | "
-                    f"{P.render(pty.refine.pred, pty.refine.var)}}}"
+                    f"runtime contract failed: value {val} for `{pname}`{where} violates "
+                    f"{{{pty.refine.var} | {P.render(pty.refine.pred, pty.refine.var)}}}{why}"
                 )
 
-    def call_builtin(self, name: str, args: List):
+    def call_builtin(self, name: str, args: List, checks=None, blame=None):
         sig = self.builtins[name]
-        # enforce refined params at the boundary, too
         benv = {pn: v for (pn, _t, _l), v in zip(sig.params, args)}
-        for (pname, pty, _lin), val in zip(sig.params, args):
-            self._enforce(pname, pty, val, benv)
+        for idx, ((pname, pty, _lin), val) in enumerate(zip(sig.params, args)):
+            if checks is None or idx in checks:
+                self._enforce(pname, pty, val, benv, blame, name)
         if name == "len":
             return len(args[0])
         if name == "to_str":
@@ -245,7 +254,7 @@ class Interpreter:
             return self._eval_binop(e, env, k, h)
         if isinstance(e, N.Call):
             return _Thunk(lambda: self._eval_seq(e.args, 0, [], env,
-                lambda vals: _Thunk(lambda: self._apply(e.fn, vals, env, k, h)), h))
+                lambda vals: _Thunk(lambda: self._apply(e, vals, env, k, h)), h))
         if isinstance(e, N.If):
             return _Thunk(lambda: self.eval(e.cond, env, lambda c: (
                 _Thunk(lambda: self.eval_block(e.then, env, k, h)) if c
@@ -257,9 +266,10 @@ class Interpreter:
             return _Thunk(lambda: self._eval_seq(e.elements, 0, [], env,
                 lambda vals: _Thunk(lambda: k(list(vals))), h))
         if isinstance(e, N.Index):
+            do_check = getattr(e, "needs_check", True)  # #8: proven access -> erased
             return _Thunk(lambda: self.eval(e.arr, env,
                 lambda a: _Thunk(lambda: self.eval(e.idx, env,
-                    lambda i: _Thunk(lambda: k(self._index(a, i, e.line))), h)), h))
+                    lambda i: _Thunk(lambda: k(self._index(a, i, e.line, do_check))), h)), h))
         if isinstance(e, N.Match):
             return _Thunk(lambda: self.eval(e.scrutinee, env,
                 lambda s: _Thunk(lambda: self._match(e, s, env, k, h)), h))
@@ -317,14 +327,16 @@ class Interpreter:
             return a != b
         raise ProvisoRuntimeError(f"unknown operator {op}")
 
-    def _index(self, arr, idx, line):
+    def _index(self, arr, idx, line, do_check=True):
         if not isinstance(arr, list):
             raise ProvisoRuntimeError(f"cannot index a non-array at line {line}")
-        if idx < 0 or idx >= len(arr):
-            raise ProvisoRuntimeError(
-                f"index {idx} out of bounds at line {line} (array length {len(arr)}) "
-                f"-- a refinement Int{{k | k >= 0 && k < len(a)}} would have caught this"
-            )
+        if do_check:  # #8: erased when the access was statically proven in range
+            self.checks_performed += 1
+            if idx < 0 or idx >= len(arr):
+                raise ProvisoRuntimeError(
+                    f"index {idx} out of bounds at line {line} (array length {len(arr)}) "
+                    f"-- a refinement Int{{k | k >= 0 && k < len(a)}} would have caught this"
+                )
         return arr[idx]
 
     def _match(self, e: N.Match, scrut, env, k, h):
@@ -354,7 +366,10 @@ class Interpreter:
             return True
         return False
 
-    def _apply(self, name, vals, env, k, h):
+    def _apply(self, call, vals, env, k, h):
+        name = call.fn
+        checks = getattr(call, "runtime_checks", None)  # None -> check all (sound fallback)
+        blame = call.line
         callee = env.get(name)
         if isinstance(callee, Continuation):
             # resuming runs the captured continuation to a value (its own trampoline)
@@ -366,15 +381,15 @@ class Interpreter:
             env2 = dict(callee.env)
             for (pn, _pty), a in zip(callee.params, vals):
                 env2[pn] = a
-            for (pn, pty), a in zip(callee.params, vals):
-                self._enforce(pn, pty, a, env2)
+            for (pn, pty), a in zip(callee.params, vals):  # first-class calls are gradual
+                self._enforce(pn, pty, a, env2, blame, name)
             return _Thunk(lambda: self.eval(callee.body, env2, k, h))
         if name in self.ctors:
             return _Thunk(lambda: k(Data(name, vals)))
         if name in self.fns:
-            return _Thunk(lambda: self.call_user(name, vals, k, h))
+            return _Thunk(lambda: self.call_user(name, vals, k, h, checks, blame))
         if name in self.builtins:
-            return _Thunk(lambda: k(self.call_builtin(name, vals)))
+            return _Thunk(lambda: k(self.call_builtin(name, vals, checks, blame)))
         raise ProvisoRuntimeError(f"unknown function `{name}`")
 
     # --- exceptions (Exc) ------------------------------------------------- #

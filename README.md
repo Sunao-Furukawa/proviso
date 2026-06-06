@@ -55,6 +55,10 @@ A type carries a refinement that is **either a predicate or `?` (unknown)**:
 - Two fully-refined types are checked by **implication** over linear integer arithmetic.
   If `P ⇒ Q` fails, the solver returns a concrete **counterexample**, and that is what
   every diagnostic is built around.
+- **You only pay at runtime for what you didn't prove statically.** A contract the checker
+  proves is *erased* — zero runtime cost. Only gradual (unproven) obligations are checked,
+  and when one fails the error **blames** the unproven call site. So the gradual dial is a
+  real trade-off between static effort and runtime cost (`samples/erasure.pvo`).
 
 `examples/06` shows the seam: it type-checks with one gradual note, runs fine on `7`, and
 the deferred check *fires* on `0` — the bill comes due exactly where you chose to defer it.

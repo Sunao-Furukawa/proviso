@@ -1,0 +1,20 @@
+# Contract erasure + blame (#8). A refinement contract that the checker PROVES at a
+# call site costs nothing at runtime -- the check is erased. Only the gradual (unproven)
+# ones are checked, and if such a check fails the error blames the unproven call site.
+#
+# Here `safe_div(20, 4)` is proven (4 != 0) so no runtime check runs; `dangerous` passes
+# a gradual Int, so that one call IS checked at runtime.
+
+fn safe_div(a: Int, b: Int{n | n != 0}) -> Int {
+  a / b
+}
+
+fn dangerous(x: Int) -> Int {
+  safe_div(100, x)    # x is gradual -> this call is checked at runtime
+}
+
+fn main() -> Int ! {IO} {
+  print(safe_div(20, 4));   # proven: 4 != 0 -> no runtime check
+  print(safe_div(30, 5));   # proven: 5 != 0 -> no runtime check
+  dangerous(2)              # gradual -> checked at runtime (passes: 2 != 0)
+}

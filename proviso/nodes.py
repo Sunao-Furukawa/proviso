@@ -5,7 +5,7 @@ Nodes carry a source location (line) so diagnostics can point precisely.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Set
 
 from .predicate import Pred
 
@@ -154,6 +154,11 @@ class Call(Expr):
     fn: str
     args: List[Expr]
     line: int = 0
+    # #8 contract erasure: arg indices whose refinement the checker could NOT prove,
+    # so they need a runtime contract check. The checker fills this in; the rest are
+    # erased (cost nothing at runtime). `None` => checker never ran => check all args
+    # (the sound fallback).
+    runtime_checks: Optional[Set[int]] = None
 
 
 @dataclass
@@ -167,6 +172,10 @@ class Index(Expr):
     arr: Expr
     idx: Expr
     line: int = 0
+    # #8 contract erasure: whether the 0 <= i < len(arr) bounds obligation needs a
+    # runtime check. The checker sets it False when the access is statically proven
+    # in range. Defaults True so an unchecked program stays sound.
+    needs_check: bool = True
 
 
 @dataclass

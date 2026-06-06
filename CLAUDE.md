@@ -120,8 +120,17 @@ deep recursion (e.g. sumto(100000), count(300000)) stays flat instead of overflo
 Python C stack. Handler boundaries / resumptions use nested `_drive` calls (one frame per
 active handler/resume, not per recursion level). Suite is 63 tests.
 
-Roadmap agreed with the user (do in this order): #5b len-guard occurrence typing [DONE]
--> **#4 static array-length tracking [DONE]** -> (#3 more measures) -> #8 contract erasure + blame ->
+**#8 contract erasure + blame [DONE]**: the checker decides per call-site/index whether a
+refinement obligation is proven (erased) or gradual (checked); it annotates the AST
+(`Call.runtime_checks` = set of arg indices to check; `Index.needs_check` bool). The
+interpreter enforces only those (others cost nothing at runtime); `interp.checks_performed`
+counts checks actually run. A failing gradual check raises ProvisoCastError with a blame
+note naming the unproven call site (line). If a node has no annotation (program run without
+the checker), the interpreter checks everything (sound fallback). Tests `run_src`/
+`run_counting` run the checker first so erasure is active. See `samples/erasure.pvo`.
+
+Roadmap (do in this order): #5b len-guard [DONE] -> #4 array-length [DONE] ->
+(#3 more measures) -> #8 erasure+blame [DONE] ->
 #2 precise function-arg subtyping -> #9 typestate -> #10 LSP. Deferred: #1 nested
 cross-handler algebraic-effect generalization (high risk). Also: nested-pattern
 exhaustiveness.

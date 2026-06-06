@@ -112,8 +112,19 @@ def analyze_src(src):
 
 
 def run_src(src, entry="main"):
-    interp = Interpreter(proviso.parse(src))
+    module = proviso.parse(src)
+    proviso.check(module, src)  # annotate nodes so proven contracts are erased (#8)
+    interp = Interpreter(module)
     return interp.run(entry), interp.output
+
+
+def run_counting(src, entry="main"):
+    """Run a program and report how many runtime contract checks actually executed."""
+    module = proviso.parse(src)
+    proviso.check(module, src)
+    interp = Interpreter(module)
+    interp.run(entry)
+    return interp.checks_performed
 
 
 # --- #1: SMT backend -------------------------------------------------------- #
@@ -201,8 +212,10 @@ check("in-bounds index proven inside get_at (no runtime check)",
 d, _ = analyze_src("fn f(xs: Array) -> Int { xs[-1] }\n")
 check("provably out-of-bounds -> hard bounds error", codes(d) == ["bounds"], codes(d))
 
+# array reaches `g` through a parameter, so its length is gradual -> a runtime check
 _oob = ("fn g(xs: Array, i: Int{k | k >= 0 && k < len(xs)}) -> Int { xs[i] }\n"
-        "fn main() -> Int { let a = [1, 2]; g(a, 5) }\n")
+        "fn viaparam(xs: Array) -> Int { g(xs, 5) }\n"
+        "fn main() -> Int { viaparam([1, 2]) }\n")
 fired = False
 try:
     run_src(_oob)
@@ -376,6 +389,44 @@ _kl = ("fn get_at(xs: Array, i: Int{k | k >= 0 && k < len(xs)}) -> Int { xs[i] }
        "fn main() -> Int { let a = [1, 2, 3]; get_at(a, 2) }\n")
 d, w = analyze_src(_kl)
 check("dependent get on known-length array is proven", d == [] and w == [], (codes(d), len(w)))
+
+# --- #8: contract erasure + blame ------------------------------------------- #
+print("contract erasure + blame:")
+# all contracts proven -> ZERO runtime checks performed (erased)
+_proven = ("fn safe_div(a: Int, b: Int{n | n != 0}) -> Int { a / b }\n"
+           "fn main() -> Int { safe_div(20, 4) + safe_div(30, 5) }\n")
+check("proven contracts are erased (0 runtime checks)", run_counting(_proven) == 0,
+      run_counting(_proven))
+
+# a gradual argument is checked at runtime (count > 0)
+_grad = ("fn safe_div(a: Int, b: Int{n | n != 0}) -> Int { a / b }\n"
+         "fn thru(x: Int) -> Int { safe_div(100, x) }\n"
+         "fn main() -> Int { thru(2) }\n")
+check("gradual contract is checked at runtime (count == 1)", run_counting(_grad) == 1,
+      run_counting(_grad))
+
+# proven array index erased; the guard makes it free
+_idx = ("fn main() -> Int { let a = [10, 20, 30]; a[0] + a[2] }\n")
+check("proven array indexing is erased (0 checks)", run_counting(_idx) == 0,
+      run_counting(_idx))
+
+# the erasure sample runs, and only the one gradual call is checked
+_er = open(os.path.join(SAMPLES, "erasure.pvo"), encoding="utf-8-sig").read()
+d, _ = analyze_src(_er)
+check("erasure sample checks clean", d == [], codes(d))
+check("erasure sample: exactly 1 runtime check (the gradual call)",
+      run_counting(_er) == 1, run_counting(_er))
+
+# blame: a failing gradual check names the unproven call site
+_blame = ("fn need(x: Int{n | n > 0}) -> Int { x }\n"
+          "fn thru(y: Int) -> Int { need(y) }\n"
+          "fn main() -> Int { thru(0) }\n")
+msg = ""
+try:
+    run_src(_blame)
+except ProvisoCastError as ex:
+    msg = str(ex)
+check("blame names the unproven call site", "blame" in msg and "line" in msg, msg)
 
 print()
 print(f"{_passed} passed, {_failed} failed")

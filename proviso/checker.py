@@ -462,7 +462,8 @@ class Checker:
             ))
             return T.INT(), eff
         # The bounds obligation 0 <= idx < len(arr) is a *dependent* refinement.
-        self._check_index_bounds(e, it, env)
+        # #8: record whether the access needs a runtime bounds check (vs. proven/erased).
+        e.needs_check = self._check_index_bounds(e, it, env)
         return T.INT(), eff
 
     def _infer_binop(self, e: N.BinOp, env: Env) -> Tuple[T.Type, Dict[str, int]]:
@@ -551,14 +552,17 @@ class Checker:
             if t is not None:
                 term_map[pn] = t
         arg_types = []
-        for arg, (pname, pty, _lin) in zip(e.args, sig.params):
+        needs_check = set()  # arg indices that need a runtime contract check (gradual)
+        for i, (arg, (pname, pty, _lin)) in enumerate(zip(e.args, sig.params)):
             at, ae = self._infer(arg, env)
             arg_types.append(at)
             eff.update(ae)
             # `print` is intentionally polymorphic over base types in v1.
             if e.fn == "print":
                 continue
-            self._check_arg(at, pty, arg, e.fn, pname, env, term_map)
+            if self._check_arg(at, pty, arg, e.fn, pname, env, term_map):
+                needs_check.add(i)
+        e.runtime_checks = needs_check  # #8: only these args are checked at runtime
 
         # effect-variable polymorphism: bind the variables in arrow-typed parameters
         # from the concrete effects of the actual function arguments.
@@ -685,7 +689,8 @@ class Checker:
             self._check_refine(src, dst, line, context, param_name=None, arg=None)
 
     def _check_arg(self, arg_ty: T.Type, param_ty: T.Type, arg: N.Expr,
-                   fn: str, pname: str, env: Env, term_map: dict) -> None:
+                   fn: str, pname: str, env: Env, term_map: dict) -> bool:
+        """Returns True if this argument needs a runtime contract check (gradual)."""
         if isinstance(param_ty, T.ArrowType):
             ok = isinstance(arg_ty, T.ArrowType) or (
                 isinstance(arg_ty, BaseType) and arg_ty.name == "Fn")
@@ -697,7 +702,7 @@ class Checker:
                     why="a function-typed parameter needs a function value.",
                     source_line=self.src_line(arg.line),
                 ))
-            return
+            return False
         if isinstance(param_ty, T.DataType):
             if not (isinstance(arg_ty, T.DataType) and arg_ty.name == param_ty.name):
                 self.diags.append(Diagnostic(
@@ -707,7 +712,7 @@ class Checker:
                     line=arg.line, expected=str(param_ty), found=str(arg_ty),
                     why="enum types differ.", source_line=self.src_line(arg.line),
                 ))
-            return
+            return False
         if isinstance(arg_ty, BaseType) and isinstance(param_ty, BaseType):
             if arg_ty.name != param_ty.name:
                 self.diags.append(Diagnostic(
@@ -718,17 +723,17 @@ class Checker:
                     why="base types differ.",
                     source_line=self.src_line(arg.line),
                 ))
-                return
+                return False
             # dependent requirement (mentions other names / len) -> SMT-discharge it
             if (param_ty.name == "Int" and not param_ty.refine.unknown
                     and P.is_dependent(param_ty.refine.pred)):
-                self._check_dependent(arg_ty, param_ty, arg, env, term_map,
+                return self._check_dependent(arg_ty, param_ty, arg, env, term_map,
+                                             context=f"argument `{pname}` of `{fn}`",
+                                             pname=pname)
+            return self._check_refine(arg_ty, param_ty, arg.line,
                                       context=f"argument `{pname}` of `{fn}`",
-                                      pname=pname)
-                return
-            self._check_refine(arg_ty, param_ty, arg.line,
-                               context=f"argument `{pname}` of `{fn}`",
-                               param_name=pname, arg=arg)
+                                      param_name=pname, arg=arg)
+        return False
 
     # --- dependent-refinement machinery (#5) ------------------------------ #
     def _arg_term(self, e: N.Expr):
@@ -760,35 +765,39 @@ class Checker:
                      f"prove it now)."),
         ))
 
-    def _discharge(self, goal, assumptions, line, context, what, make_conflict) -> None:
-        """Proven -> ok; provably impossible -> hard error; otherwise -> runtime check."""
+    def _discharge(self, goal, assumptions, line, context, what, make_conflict) -> bool:
+        """Returns True if a runtime check is needed (gradual), False if it can be erased.
+
+        Proven -> erase (False); provably impossible -> hard error (False, won't run);
+        otherwise -> deferred runtime check (True)."""
         try:
             model = P.z3_discharge(assumptions, goal)
         except P.NotDecidable:
             self._gradual(line, context, what)
-            return
+            return True
         if model is None:
-            return  # statically proven
+            return False  # statically proven -> no runtime check (erased)
         try:
             possible = P.z3_consistent(assumptions + [goal])
         except P.NotDecidable:
             possible = True
         if possible:
             self._gradual(line, context, what)  # might hold at runtime -> check there
-        else:
-            self.diags.append(make_conflict(model))
+            return True
+        self.diags.append(make_conflict(model))  # provably impossible -> hard error
+        return False
 
     def _model_str(self, model: dict) -> str:
         parts = [f"{k} = {v}" for k, v in sorted(model.items())]
         return ", ".join(parts) if parts else "(some inputs)"
 
     def _check_dependent(self, arg_ty: BaseType, param_ty: BaseType, arg: N.Expr,
-                         env: Env, term_map: dict, context: str, pname: str) -> None:
+                         env: Env, term_map: dict, context: str, pname: str) -> bool:
         argterm = self._arg_term(arg)
         req = P.render(param_ty.refine.pred, param_ty.refine.var)
         if argterm is None:
             self._gradual(arg.line, context, f"{{{param_ty.refine.var} | {req}}}")
-            return
+            return True
         goal = P.subst_value(P.subst_names(param_ty.refine.pred, term_map), argterm)
         assumptions = self._assumptions(env)
         if not arg_ty.refine.unknown:
@@ -823,17 +832,17 @@ class Checker:
                 note="a dependent (paid-for) obligation, discharged by the SMT backend.",
             )
 
-        self._discharge(goal, assumptions, arg.line, context,
-                        f"{{{param_ty.refine.var} | {req}}}", make_conflict)
+        return self._discharge(goal, assumptions, arg.line, context,
+                               f"{{{param_ty.refine.var} | {req}}}", make_conflict)
 
-    def _check_index_bounds(self, e: N.Index, idx_ty: T.Type, env: Env) -> None:
+    def _check_index_bounds(self, e: N.Index, idx_ty: T.Type, env: Env) -> bool:
         if not isinstance(e.arr, N.Var):
             self._gradual(e.line, "array index", "0 <= i < len(array)")
-            return
+            return True
         idxterm = self._arg_term(e.idx)
         if idxterm is None:
             self._gradual(e.line, "array index", "0 <= i < len(array)")
-            return
+            return True
         arrname = e.arr.name
         goal = P.PAnd(P.PRel(">=", idxterm, P.TInt(0)),
                       P.PRel("<", idxterm, P.TLen(arrname)))
@@ -871,19 +880,19 @@ class Checker:
                      "at runtime, unproven ones are checked.",
             )
 
-        self._discharge(goal, assumptions, e.line, "array index",
-                        f"0 <= i < len({arrname})", make_conflict)
+        return self._discharge(goal, assumptions, e.line, "array index",
+                               f"0 <= i < len({arrname})", make_conflict)
 
     def _check_refine(self, src: BaseType, dst: BaseType, line: int, context: str,
-                      param_name: Optional[str], arg: Optional[N.Expr]) -> None:
+                      param_name: Optional[str], arg: Optional[N.Expr]) -> bool:
         if dst.refine.unknown:
-            return  # requirement is `?` -- accepts anything
+            return False  # requirement is `?` -- accepts anything, nothing to check
         if P.is_dependent(dst.refine.pred):
             # dependent return/binding obligation without call-site substitution
             # context -> defer to a runtime check rather than mis-judging it
             self._gradual(line, context, f"{{{dst.refine.var} | "
                           f"{P.render(dst.refine.pred, dst.refine.var)}}}")
-            return
+            return True
         if src.refine.unknown:
             # gradual point: known requirement, unknown source -> runtime check
             self.warnings.append(Warning(
@@ -892,13 +901,14 @@ class Checker:
                          f"Int -- inserting a runtime check (pay later, or annotate to "
                          f"prove it now)."),
             ))
-            return
+            return True
         # both sides fully refined -> decide it
         cx = P.implies(src.refine.pred, dst.refine.pred)
         if cx is None:
-            return  # proven
+            return False  # statically proven -> erase the runtime check
         self.diags.append(self._refine_conflict(src, dst, line, context, cx,
                                                 param_name, arg))
+        return False  # hard conflict -> won't run, so no runtime check
 
     def _refine_conflict(self, src: BaseType, dst: BaseType, line: int, context: str,
                          cx: int, param_name: Optional[str],

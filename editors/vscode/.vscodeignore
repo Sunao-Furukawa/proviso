@@ -1,4 +1,9 @@
 .vscode/**
-node_modules/**
 **/*.map
 .gitignore
+README.dev.md
+
+# NOTE: do NOT ignore node_modules/ here. This extension is not bundled, so vsce must
+# ship the production dependency (vscode-languageclient) inside the .vsix. vsce already
+# excludes devDependencies automatically. Ignoring node_modules would make the extension
+# fail to activate with "command 'proviso.runFile' not found".

@@ -69,15 +69,17 @@ Press **F5** ("Run Proviso Extension"). A second VS Code window opens — open a
 
 ```sh
 cd editors/vscode
-npm install
+npm install                        # REQUIRED before packaging (bundles vscode-languageclient)
 npm install -g @vscode/vsce
-vsce package                       # produces proviso-1.0.1.vsix
-code --install-extension proviso-1.0.1.vsix
+vsce package                       # produces proviso-1.0.2.vsix
+code --install-extension proviso-1.0.2.vsix
 ```
 
-Then **reload VS Code** and just open a `.pvo` file in any normal window — do **not**
-press F5 to "start" it (see the note at the top). Reinstalling the same version? add
-`--force`.
+`npm install` **must** run before `vsce package` — otherwise `node_modules` is not
+bundled and the extension fails to activate (you'll see *"command 'proviso.runFile' not
+found"*). Then **reload VS Code** and just open a `.pvo` file in any normal window — do
+**not** press F5 to "start" it (see the note at the top). Reinstalling the same version?
+add `--force`.
 
 ### Running a program
 
@@ -106,9 +108,18 @@ Example `settings.json`:
 
 ## Troubleshooting
 
+- **`command 'proviso.runFile' not found`.** The extension failed to activate, almost
+  always because the packaged `.vsix` is missing `node_modules` (the
+  `vscode-languageclient` dependency). Repackage with `npm install` first:
+  `cd editors/vscode && npm install && vsce package`, then reinstall
+  (`code --install-extension proviso-1.0.2.vsix --force`) and reload the window. From
+  v1.0.2 the run command and highlighting keep working even if the language server can't
+  load (you'll get a warning instead of a dead extension).
 - **No diagnostics appear.** Open *Output → Proviso* (and *Output → Proviso Language
   Server*) to see startup errors. The usual cause is that `python -m proviso lsp`
-  cannot import the package — install it (step 1) or set `proviso.serverCwd`.
+  cannot import the package — install it (step 1) or set `proviso.serverCwd`. Note: a
+  correct program has *no* diagnostics; test with `examples/03_conflict.pvo`, which must
+  show a red squiggle.
 - **`python` not found.** Set `proviso.pythonPath` to a full path.
 - **Diagnostics are stale.** They refresh on edit and save; this client uses
   full-document sync.

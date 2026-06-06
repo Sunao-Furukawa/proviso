@@ -1,35 +1,57 @@
 // VS Code client for Proviso.
 //
-//   * launches `<python> -m proviso lsp` over stdio for live diagnostics + hover
-//     (all the intelligence lives in the server, proviso/lsp.py); and
-//   * adds a "Proviso: Run Current File" command that runs the open `.pvo` with
-//     `proviso run` in an integrated terminal.
+//   * a "Proviso: Run Current File" command that runs the open `.pvo` with
+//     `proviso run` in an integrated terminal (bound to F5 / Ctrl+F5 for `.pvo`);
+//   * a language server (`proviso lsp`) for live diagnostics + hover.
 //
-// Note: you do NOT press F5 (Start Debugging) to use this extension -- there is no
-// Proviso debugger. F5 is only for *developing* the extension itself (it launches an
-// Extension Development Host, and only when the `editors/vscode` folder is open). To
-// run a Proviso program, use the command below (bound to F5 / Ctrl+F5 while a `.pvo`
-// file is focused, or the play button in the editor title bar).
+// The run command is registered FIRST and the language server is started lazily in a
+// try/catch, so syntax highlighting and "run" keep working even if the bundled
+// `vscode-languageclient` is missing or the server fails to start. (Only `vscode`
+// is required at module load -- everything else is required lazily, so a packaging
+// problem can never stop the extension from activating.)
+//
+// You do NOT press plain F5-to-debug to use this; there is no Proviso debugger.
 
-const { workspace, window, commands } = require("vscode");
-const { LanguageClient, TransportKind } = require("vscode-languageclient/node");
+const vscode = require("vscode");
 
 let client;
 
 function serverCwd(cfg) {
   let cwd = cfg.get("serverCwd", "");
-  if (!cwd && workspace.workspaceFolders && workspace.workspaceFolders.length) {
-    cwd = workspace.workspaceFolders[0].uri.fsPath;
+  const folders = vscode.workspace.workspaceFolders;
+  if (!cwd && folders && folders.length) {
+    cwd = folders[0].uri.fsPath;
   }
   return cwd;
 }
 
 function activate(context) {
-  const cfg = workspace.getConfiguration("proviso");
+  // 1) Register the command first -- it must always exist.
+  context.subscriptions.push(
+    vscode.commands.registerCommand("proviso.runFile", runCurrentFile)
+  );
+
+  // 2) Start the language server; tolerate any failure.
+  try {
+    startLanguageServer(context);
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    vscode.window.showWarningMessage(
+      "Proviso: highlighting and Run are active, but the language server could not " +
+        "start (diagnostics/hover disabled): " +
+        msg +
+        " — run `npm install` in editors/vscode before `vsce package`, or check the " +
+        "`proviso.pythonPath` / `proviso.serverCwd` settings."
+    );
+  }
+}
+
+function startLanguageServer(context) {
+  const { LanguageClient, TransportKind } = require("vscode-languageclient/node");
+  const cfg = vscode.workspace.getConfiguration("proviso");
   const python = cfg.get("pythonPath", "python");
   const cwd = serverCwd(cfg);
 
-  // --- the language server (diagnostics + hover) ---
   const exe = {
     command: python,
     args: ["-m", "proviso", "lsp"],
@@ -40,6 +62,7 @@ function activate(context) {
     documentSelector: [{ scheme: "file", language: "proviso" }],
     outputChannelName: "Proviso",
   };
+
   client = new LanguageClient(
     "proviso",
     "Proviso Language Server",
@@ -48,26 +71,21 @@ function activate(context) {
   );
   client.start();
   context.subscriptions.push({ dispose: () => client && client.stop() });
-
-  // --- the "run this file" command ---
-  context.subscriptions.push(
-    commands.registerCommand("proviso.runFile", runCurrentFile)
-  );
 }
 
 function runCurrentFile() {
-  const editor = window.activeTextEditor;
+  const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document.languageId !== "proviso") {
-    window.showInformationMessage("Open a .pvo file to run it with Proviso.");
+    vscode.window.showInformationMessage("Open a .pvo file to run it with Proviso.");
     return;
   }
-  const cfg = workspace.getConfiguration("proviso");
+  const cfg = vscode.workspace.getConfiguration("proviso");
   const python = cfg.get("pythonPath", "python");
   const cwd = serverCwd(cfg);
   const file = editor.document.fileName;
 
   editor.document.save().then(() => {
-    const terminal = window.createTerminal(
+    const terminal = vscode.window.createTerminal(
       cwd ? { name: "Proviso", cwd } : { name: "Proviso" }
     );
     terminal.show(true);

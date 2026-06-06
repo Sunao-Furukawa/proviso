@@ -6,10 +6,21 @@ A VS Code extension that gives you, for `.pvo` files:
   constructors, effects, operators, strings, and comments;
 - **live diagnostics** — the same dialogue (required / known / why / counterexample /
   two choices) the CLI prints, shown inline as you type, with gradual points as warnings;
-- **hover** — the enclosing function's effect-inferred signature.
+- **hover** — the enclosing function's effect-inferred signature;
+- **run** — *Proviso: Run Current File* runs the open `.pvo` with `proviso run`.
 
 Highlighting works on its own; diagnostics and hover are powered by the Proviso language
 server (`proviso lsp`).
+
+> **You do not press F5 to *use* the extension.** Once installed, just open a `.pvo`
+> file — highlighting, diagnostics, and hover are automatic. Plain **F5 = Start
+> Debugging**, and there is no Proviso debugger, so VS Code shows *"There is no
+> extension for debugging proviso… search the Marketplace?"*. That message is expected
+> and harmless. To **run** a program, use the play button in the editor's title bar, the
+> Command Palette (*Proviso: Run Current File*), or **F5 / Ctrl+F5 while a `.pvo` file is
+> focused** (this extension rebinds them to "run" for `.pvo`). F5 launching an *Extension
+> Development Host* is a separate thing — only for developing the extension itself
+> (see "Quick try" below).
 
 VS Code has no built-in "just point at an LSP command" setting, so this small client
 extension is the supported way to use `proviso lsp`.
@@ -60,9 +71,23 @@ Press **F5** ("Run Proviso Extension"). A second VS Code window opens — open a
 cd editors/vscode
 npm install
 npm install -g @vscode/vsce
-vsce package                       # produces proviso-1.0.0.vsix
-code --install-extension proviso-1.0.0.vsix
+vsce package                       # produces proviso-1.0.1.vsix
+code --install-extension proviso-1.0.1.vsix
 ```
+
+Then **reload VS Code** and just open a `.pvo` file in any normal window — do **not**
+press F5 to "start" it (see the note at the top). Reinstalling the same version? add
+`--force`.
+
+### Running a program
+
+Open a `.pvo` file and either:
+
+- click the **▶ play button** in the editor's title bar, or
+- run **Proviso: Run Current File** from the Command Palette (`Ctrl+Shift+P`), or
+- press **F5** or **Ctrl+F5** while the `.pvo` file is focused.
+
+The file is saved and run with `python -m proviso run <file>` in an integrated terminal.
 
 ## 3. Settings
 

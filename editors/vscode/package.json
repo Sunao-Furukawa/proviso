@@ -1,8 +1,8 @@
 {
   "name": "proviso",
   "displayName": "Proviso",
-  "description": "Language support for Proviso (.pvo): live dialogue diagnostics and hover, powered by the Proviso language server.",
-  "version": "1.0.0",
+  "description": "Language support for Proviso (.pvo): syntax highlighting, live dialogue diagnostics, hover, and run.",
+  "version": "1.0.1",
   "publisher": "proviso",
   "engines": { "vscode": "^1.75.0" },
   "categories": ["Programming Languages"],
@@ -22,6 +22,41 @@
         "language": "proviso",
         "scopeName": "source.proviso",
         "path": "./syntaxes/proviso.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "proviso.runFile",
+        "title": "Run Current File",
+        "category": "Proviso",
+        "icon": "$(play)"
+      }
+    ],
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "proviso.runFile",
+          "when": "resourceLangId == proviso",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "proviso.runFile",
+          "when": "resourceLangId == proviso"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "proviso.runFile",
+        "key": "f5",
+        "when": "editorLangId == proviso && editorTextFocus"
+      },
+      {
+        "command": "proviso.runFile",
+        "key": "ctrl+f5",
+        "when": "editorLangId == proviso && editorTextFocus"
       }
     ],
     "configuration": {

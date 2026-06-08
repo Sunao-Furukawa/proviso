@@ -296,3 +296,37 @@ class TypestateChecker:
 
 def check_typestate(module: N.Module, source: str) -> List[Diagnostic]:
     return TypestateChecker(module, source).run()
+
+
+# --- runtime enforcement (#9, dynamic side) -------------------------------- #
+class RuntimeOpSig:
+    """The per-operation typestate contract the interpreter enforces at runtime:
+    which parameters require a `(protocol, state)`, and which one the result produces.
+    `has_state` is the cheap gate -- functions with no `@State` are plain functions."""
+    __slots__ = ("params", "ret", "has_state")
+
+    def __init__(self, params, ret):
+        self.params = params              # list of (proto, state) | None, per param
+        self.ret = ret                    # (proto, state) | None
+        self.has_state = ret is not None or any(p is not None for p in params)
+
+
+def operation_signatures(module: N.Module) -> Dict[str, RuntimeOpSig]:
+    """Lower each declaration's `@State` annotations to runtime typestate signatures,
+    so the interpreter can carry a resource's state and check it where it is consumed.
+    Shares the state->protocol resolution with the static pass."""
+    state_proto: Dict[str, str] = {}
+    for p in getattr(module, "protocols", []):
+        for s in p.states:
+            state_proto[s] = p.name
+
+    def cell(te: Optional[N.TypeExpr]) -> Optional[Tuple[str, str]]:
+        if not isinstance(te, N.TypeExpr) or te.state is None:
+            return None
+        proto = state_proto.get(te.state)
+        return (proto, te.state) if proto is not None else None
+
+    out: Dict[str, RuntimeOpSig] = {}
+    for d in module.decls:
+        out[d.name] = RuntimeOpSig([cell(p.type) for p in d.params], cell(d.ret))
+    return out

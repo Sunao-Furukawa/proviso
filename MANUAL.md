@@ -455,8 +455,8 @@ Handlers compose without restriction:
 - **Across function calls** — an effect performed inside a *called function* is caught by
   the caller's handler.
 - **Escaping continuations** — a captured `k` is an ordinary value: a handler can return it,
-  you can bind it, and you can invoke it later, *outside* the `handle` that produced it.
-  Calling such a continuation type-checks as a gradual call.
+  you can bind it, and you can invoke it later, *outside* the `handle` that produced it. The
+  resumption has a precise `Fn(Int) -> answer` type, so calling it is a statically-typed call.
 
 ```proviso
 fn main() -> Int ! {IO} {
@@ -663,10 +663,12 @@ gracefully degrade to gradual runtime checks.
 ### Editor integration (LSP)
 
 `proviso lsp` is a dependency-free Language Server speaking LSP over stdio (JSON-RPC with
-`Content-Length` framing). It supports document sync and publishes the *same* dialogue
-diagnostics the CLI renders (errors and gradual-point warnings), and answers
-`textDocument/hover` with the enclosing function's effect-inferred signature. Point any
-LSP-capable editor at the `proviso lsp` command for `.pvo` files. A ready-to-use **Visual
+`Content-Length` framing). It supports **incremental** document sync (range-based edits) and
+publishes the *same* dialogue diagnostics the CLI renders (errors and gradual-point warnings),
+answers `textDocument/hover` with the enclosing function's effect-inferred signature, and
+supports **`textDocument/definition`** — go-to-definition for functions, type aliases, enums,
+constructors, and protocols. Point any LSP-capable editor at the `proviso lsp` command for
+`.pvo` files. A ready-to-use **Visual
 Studio Code** client is in [`editors/vscode/`](editors/vscode/) — see its README for setup
 (`pip install -e .`, then run the extension and open a `.pvo` file).
 
@@ -682,14 +684,18 @@ Proviso is a focused prototype. Deliberately out of scope in v1.0.0:
 - Function-argument subtyping is precise for refinements/effects but **single-level** for
   effect-variable instantiation; the name-based effect-inference pass does not substitute
   effect variables.
-- **Typestate is static-only** (no runtime state enforcement); `@State` is erased.
+- **Typestate** is enforced both statically and, for the gradual cases the static pass
+  cannot follow, at **runtime** (a `Resource` carries its state; a wrong-state operation
+  raises). `@State` is erased from the type; the state rides on the value.
 - Constructor-field runtime contracts are not enforced.
-- `match` exhaustiveness is checked at the top level (not for nested patterns).
+- `match` exhaustiveness recurses into nested patterns and reports a concrete missing case;
+  redundant/unreachable arms are not yet flagged.
 - Calls are on names only; you cannot immediately call a lambda literal or an indexed
   element — bind it first.
-- The LSP does incremental edits as full-document sync; no go-to-definition yet.
-- An escaped continuation is typed gradually (callable, but its precise arrow is not
-  recovered).
+- The LSP supports incremental sync and go-to-definition; find-references and rename are not
+  implemented.
+- An escaped continuation has a precise `Fn(Int) -> answer` arrow; a continuation that escapes
+  through a non-function join (a clause that returns `k` itself) still degrades to gradual.
 
 These boundaries are where the prototype stops, not where the design does.
 
@@ -802,9 +808,9 @@ lambda     := 'fn' '(' params? ')' ('->' type)? block
 10. a stdio language server
 
 Plus, beyond the original baseline: a Z3/sampler solver backend, type aliases, effect
-inference, strings, first-class functions with multi-shot effect handlers, and a trampolined
-evaluator. The test suite is 128 dependency-free tests.
-
-Deliberately deferred to a future version: nested-pattern exhaustiveness, runtime typestate
-enforcement, LSP incremental sync and go-to-definition, and precise (non-gradual) types for
-escaped continuations.
+inference, strings, first-class functions with multi-shot effect handlers, a trampolined
+evaluator, **nested-pattern exhaustiveness** (Maranget's algorithm, with a concrete missing-
+case witness), **runtime typestate enforcement** (a `Resource` carries its state through the
+gradual regions the static pass can't follow), **LSP incremental sync and go-to-definition**,
+and **precise (non-gradual) types for escaped continuations**. The test suite is 157
+dependency-free tests.

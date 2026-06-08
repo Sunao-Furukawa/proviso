@@ -15,6 +15,7 @@ from . import nodes as N
 from . import predicate as P
 from . import types as T
 from .checker import builtin_signatures
+from .typestate import operation_signatures
 from .diagnostics import style
 
 
@@ -31,6 +32,12 @@ class ProvisoCastError(ProvisoRuntimeError):
     """A runtime refinement check failed -- the 'pay later' bill came due."""
 
 
+class ProvisoStateError(ProvisoRuntimeError):
+    """A typestate operation ran on a resource in the wrong protocol state (#9). The
+    static pass proves this away when it can; this is the runtime backstop for the
+    cases it left gradual (a resource that flowed through an un-annotated region)."""
+
+
 import sys as _sys
 _sys.setrecursionlimit(1_000_000)  # the CPS evaluator nests Python frames deeply
 
@@ -44,6 +51,26 @@ class Data:
     def __init__(self, ctor: str, fields: list):
         self.ctor = ctor
         self.fields = fields
+
+
+class Resource:
+    """A runtime value carrying its typestate (#9). A protocol operation produces one
+    (tagged with the state it just reached) and consumes one (checking the state it
+    requires); `value` is the underlying carrier (an enum record, an Int, ...) that the
+    function body actually computes with. `@State` is still erased from the *type*; the
+    state rides on the value so it survives a gradual region the static pass can't see."""
+    __slots__ = ("value", "proto", "state")
+
+    def __init__(self, value, proto, state):
+        self.value = value
+        self.proto = proto
+        self.state = state
+
+
+def _carrier(v):
+    """The underlying value, unwrapping a typestate Resource so ordinary operations
+    (arithmetic, indexing, matching, printing) see straight through it."""
+    return v.value if isinstance(v, Resource) else v
 
 
 class Closure:
@@ -123,6 +150,7 @@ class Interpreter:
         }
         self.builtins = builtin_signatures()
         self.ctors = {v.name for e in getattr(module, "enums", []) for v in e.variants}
+        self.ts_sigs = operation_signatures(module)  # #9: runtime typestate contracts
         self.output: List[str] = []
         self.checks_performed = 0  # #8: counts runtime contract checks actually run
 
@@ -154,6 +182,16 @@ class Interpreter:
     # (the sound fallback when the program was run without the checker). Proven
     # contracts are *erased* -- they cost nothing at runtime.
     def call_user(self, name, args, k, h, checks=None, blame=None):
+        # #9: typestate. A protocol operation checks each `@State` argument's current
+        # state and unwraps it to the bare carrier for the body; its result is re-tagged
+        # with the state it produces. Plain functions (no `@State`) are untouched.
+        ts = self.ts_sigs.get(name)
+        if ts is not None and ts.has_state:
+            args = [self._ts_enter(name, ts, i, a, blame) for i, a in enumerate(args)]
+            if ts.ret is not None:
+                proto, state = ts.ret
+                outer_k = k
+                k = lambda v, _k=outer_k: _k(self._ts_wrap(v, proto, state))
         env: Dict[str, object] = {}
         for (pname, _pty), val in zip(self.fn_params[name], args):
             env[pname] = val
@@ -162,6 +200,27 @@ class Interpreter:
                 self._enforce(pname, pty, val, env, blame, name)
         body = self.fns[name].body
         return _Thunk(lambda: self.eval(body, env, k, h))
+
+    def _ts_enter(self, fn, ts, i, val, blame):
+        """Consume a typestate argument: verify its state, then unwrap to the carrier."""
+        req = ts.params[i] if i < len(ts.params) else None
+        if req is None:
+            return val  # not a protocol parameter -> pass through untouched
+        proto, need = req
+        if isinstance(val, Resource):
+            if val.proto == proto and val.state != need:
+                raise ProvisoStateError(
+                    f"typestate violation at line {blame}: `{fn}` needs its {proto} "
+                    f"argument in state `{need}`, but it is in state `{val.state}` here "
+                    f"-- advance it (e.g. via the transition operation) before this call"
+                )
+            return val.value  # state OK (or a different protocol) -> hand the body the carrier
+        return val  # an untagged carrier: state is unknown at runtime -> gradual, accept
+
+    def _ts_wrap(self, v, proto, state):
+        """Produce a typestate result: tag the carrier with the state it now holds
+        (re-tagging rather than nesting if the body already returned a Resource)."""
+        return Resource(_carrier(v), proto, state)
 
     def _enforce(self, pname, pty, val, env, blame=None, fn=None) -> None:
         if isinstance(pty, T.BaseType) and pty.name == "Int" and not pty.refine.unknown:
@@ -176,6 +235,7 @@ class Interpreter:
                 )
 
     def call_builtin(self, name: str, args: List, checks=None, blame=None):
+        args = [_carrier(a) for a in args]  # builtins act on carriers, not Resources (#9)
         sig = self.builtins[name]
         benv = {pn: v for (pn, _t, _l), v in zip(sig.params, args)}
         for idx, ((pname, pty, _lin), val) in enumerate(zip(sig.params, args)):
@@ -300,6 +360,7 @@ class Interpreter:
             e.right, env, lambda b: _Thunk(lambda: k(self._arith(e.op, a, b, e.line))), h)), h))
 
     def _arith(self, op, a, b, line):
+        a, b = _carrier(a), _carrier(b)  # see through a typestate Resource (#9)
         if op == "+":
             return a + b      # Int addition or Str concatenation
         if op == "-":
@@ -328,6 +389,7 @@ class Interpreter:
         raise ProvisoRuntimeError(f"unknown operator {op}")
 
     def _index(self, arr, idx, line, do_check=True):
+        arr, idx = _carrier(arr), _carrier(idx)  # see through a typestate Resource (#9)
         if not isinstance(arr, list):
             raise ProvisoRuntimeError(f"cannot index a non-array at line {line}")
         if do_check:  # #8: erased when the access was statically proven in range
@@ -340,6 +402,7 @@ class Interpreter:
         return arr[idx]
 
     def _match(self, e: N.Match, scrut, env, k, h):
+        scrut = _carrier(scrut)  # match on the carrier behind a typestate Resource (#9)
         for arm in e.arms:
             arm_env = dict(env)
             if self._match_pat(arm.pattern, scrut, arm_env):
@@ -429,6 +492,7 @@ class Interpreter:
 
 
 def _show(v) -> str:
+    v = _carrier(v)  # print the carrier behind a typestate Resource (#9)
     if v is True:
         return "true"
     if v is False:

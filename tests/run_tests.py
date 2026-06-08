@@ -618,8 +618,9 @@ check("hover shows enclosing fn with inferred effects",
 srv = lsp.LspServer()
 init = srv.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
 caps = init[0]["result"]["capabilities"]
-check("initialize advertises hover + full sync",
-      caps["hoverProvider"] is True and caps["textDocumentSync"] == 1, caps)
+check("initialize advertises hover + definition + incremental sync",
+      caps["hoverProvider"] is True and caps["definitionProvider"] is True
+      and caps["textDocumentSync"]["change"] == 2, caps)
 opened = srv.handle({"jsonrpc": "2.0", "method": "textDocument/didOpen",
                      "params": {"textDocument": {"uri": "file:///t.pvo", "text": _cf}}})
 check("didOpen publishes diagnostics",
@@ -639,6 +640,185 @@ lsp.write_message(_buf, {"jsonrpc": "2.0", "id": 9, "result": {"ok": True}})
 _buf.seek(0)
 check("framing round-trips", lsp.read_message(_buf) == {"jsonrpc": "2.0", "id": 9,
                                                         "result": {"ok": True}})
+
+# --- LSP incremental sync ---------------------------------------------------- #
+print("LSP incremental sync:")
+# a range-based edit replaces just the spanned text (kind-2 sync)
+_doc0 = "fn main() -> Int { 0 }\n"
+# replace the `0` (line 0, chars 19..20) with `1 + 2`
+_inc = lsp.apply_change(_doc0, {"range": {"start": {"line": 0, "character": 19},
+                                          "end": {"line": 0, "character": 20}},
+                                "text": "1 + 2"})
+check("incremental edit splices a range", _inc == "fn main() -> Int { 1 + 2 }\n", _inc)
+# a change with no range is a full replacement
+check("rangeless change replaces the document",
+      lsp.apply_change(_doc0, {"text": "X"}) == "X")
+# the server applies incremental edits against the stored doc, then re-checks
+srv2 = lsp.LspServer()
+srv2.handle({"jsonrpc": "2.0", "method": "textDocument/didOpen",
+             "params": {"textDocument": {"uri": "file:///u.pvo", "text": _doc0}}})
+# splice in `f(0)` so the (now-referenced) `f` is undefined -> a diagnostic appears
+_step = srv2.handle({"jsonrpc": "2.0", "method": "textDocument/didChange",
+                     "params": {"textDocument": {"uri": "file:///u.pvo"},
+                                "contentChanges": [
+                                    {"range": {"start": {"line": 0, "character": 19},
+                                               "end": {"line": 0, "character": 20}},
+                                     "text": "f(0)"}]}})
+check("incremental didChange updates the stored doc",
+      srv2.docs["file:///u.pvo"] == "fn main() -> Int { f(0) }\n", srv2.docs.get("file:///u.pvo"))
+check("incremental didChange re-publishes diagnostics",
+      any(d["code"] == "unbound" for d in _step[0]["params"]["diagnostics"]),
+      [d["code"] for d in _step[0]["params"]["diagnostics"]])
+
+# --- LSP go-to-definition ---------------------------------------------------- #
+print("LSP go-to-definition:")
+_prog = ("enum Shape { Circle(Int), Rect(Int, Int) }\n"      # line 0
+         "fn area(s: Shape) -> Int { match s { Circle(r) => r, _ => 0 } }\n"  # line 1
+         "fn main() -> Int { area(Circle(3)) }\n")            # line 2
+# cursor on the `area` call (line 2) jumps to the `fn area` declaration (line 1)
+_d = lsp.definition_at(_prog, 2, 19)
+check("definition of a function call -> its declaration line",
+      _d is not None and _d["start"]["line"] == 1, _d)
+# cursor on `Shape` in the signature jumps to the enum declaration (line 0)
+_d2 = lsp.definition_at(_prog, 1, 11)
+check("definition of an enum name -> its declaration line",
+      _d2 is not None and _d2["start"]["line"] == 0, _d2)
+# cursor on the `Circle` constructor jumps to its variant (line 0)
+_d3 = lsp.definition_at(_prog, 2, 24)
+check("definition of a constructor -> its variant line",
+      _d3 is not None and _d3["start"]["line"] == 0, _d3)
+# an unknown / non-identifier position resolves to nothing
+check("definition of nothing -> None", lsp.definition_at(_prog, 2, 0) is None,
+      lsp.definition_at(_prog, 2, 0))
+# protocol name resolves through the same table
+_pp = ("protocol File { Closed, Open }\nenum H { H(Int) }\n"
+       "fn open(f: H @ Closed) -> H @ Open { f }\nfn main() -> Int { 0 }\n")
+check("a state name (not a declaration) resolves to nothing",
+      lsp.definition_at(_pp, 2, 16) is None, lsp.definition_at(_pp, 2, 16))
+check("enum carrier name resolves to its declaration",
+      lsp.definition_at(_pp, 2, 11)["start"]["line"] == 1, lsp.definition_at(_pp, 2, 11))
+# the server wires definition through, attaching the document uri to the Location
+srv3 = lsp.LspServer()
+srv3.handle({"jsonrpc": "2.0", "method": "textDocument/didOpen",
+             "params": {"textDocument": {"uri": "file:///v.pvo", "text": _prog}}})
+_dr = srv3.handle({"jsonrpc": "2.0", "id": 5, "method": "textDocument/definition",
+                   "params": {"textDocument": {"uri": "file:///v.pvo"},
+                              "position": {"line": 2, "character": 19}}})
+check("server definition returns a Location with uri + range",
+      _dr[0]["result"]["uri"] == "file:///v.pvo"
+      and _dr[0]["result"]["range"]["start"]["line"] == 1, _dr[0]["result"])
+
+# --- nested-pattern exhaustiveness ------------------------------------------- #
+print("nested-pattern exhaustiveness:")
+# Cons(_, Nil()) handled but Cons(_, Cons(...)) is not -> non-exhaustive with a nested witness
+_nx = ("enum L { Nil(), Cons(Int, L) }\n"
+       "fn f(xs: L) -> Int { match xs { Nil() => 0, Cons(a, Nil()) => a } }\n"
+       "fn main() -> Int { 0 }\n")
+d, _ = analyze_src(_nx)
+check("nested gap -> non-exhaustive", codes(d) == ["non-exhaustive"], codes(d))
+check("witness names the nested uncovered shape",
+      d and "Cons(_, Cons(_, _))" in (d[0].counterexample or ""), d and d[0].counterexample)
+# adding the missing nested arm makes it exhaustive (no wildcard needed)
+_ex = ("enum L { Nil(), Cons(Int, L) }\n"
+       "fn f(xs: L) -> Int { match xs { Nil() => 0, Cons(a, Nil()) => a, "
+       "Cons(a, Cons(b, r)) => b } }\nfn main() -> Int { 0 }\n")
+d, _ = analyze_src(_ex)
+check("all nested cases covered -> exhaustive", d == [], codes(d))
+# the old top-level check is unchanged: a missing top variant is still caught
+_top = ("enum S { A(), B() }\nfn f(s: S) -> Int { match s { A() => 1 } }\n"
+        "fn main() -> Int { 0 }\n")
+d, _ = analyze_src(_top)
+check("missing top-level variant still non-exhaustive", codes(d) == ["non-exhaustive"], codes(d))
+# nested literal gap: Wrap(0) covered, other ints not -> non-exhaustive
+_litgap = ("enum W { Wrap(Int) }\n"
+           "fn f(w: W) -> Int { match w { Wrap(0) => 1 } }\nfn main() -> Int { 0 }\n")
+d, _ = analyze_src(_litgap)
+check("nested literal gap -> non-exhaustive", codes(d) == ["non-exhaustive"], codes(d))
+# the showcase example: exactly one nested non-exhaustive with the nested witness
+_ex14 = open(os.path.join(EX, "14_nested_match.pvo"), encoding="utf-8-sig").read()
+d, _ = analyze_src(_ex14)
+check("example 14 is one non-exhaustive with a nested witness",
+      codes(d) == ["non-exhaustive"] and "Cons(_, Cons(_, _))" in (d[0].counterexample or ""),
+      (codes(d), d and d[0].counterexample))
+
+# --- #9 runtime typestate enforcement --------------------------------------- #
+print("runtime typestate enforcement:")
+from proviso.interp import ProvisoStateError
+_TS = ("enum H { H(Int) }\nprotocol File { Closed, Open }\n"
+       "fn make() -> H @ Closed { H(0) }\n"
+       "fn open(f: H @ Closed) -> H @ Open { f }\n"
+       "fn read(f: H @ Open) -> H @ Open { f }\n"
+       "fn close(f: H @ Open) -> H @ Closed { f }\n"
+       "fn id(f: H) -> H { f }\n")  # un-annotated: static loses the state here
+# a correct protocol run threads state through Resources and returns the carrier value
+_ok = _TS + ("fn main() -> Int { let f = make(); let f = open(f); let f = read(f); "
+             "let f = close(f); 7 }\n")
+r, _ = run_src(_ok)
+check("correct protocol run -> 7 (state threaded at runtime)", r == 7, r)
+# the static pass is gradual across `id`, so this compiles clean...
+_bad = _TS + ("fn main() -> Int { let f = make(); let g = id(f); let h = read(g); 0 }\n")
+d, _ = analyze_src(_bad)
+check("gradual typestate program type-checks clean", d == [], codes(d))
+import proviso as _pv
+check("gradual typestate program has no static typestate diag",
+      [x.code for x in _pv.check_typestate(_pv.parse(_bad), _bad)] == [],
+      [x.code for x in _pv.check_typestate(_pv.parse(_bad), _bad)])
+# ...but the runtime backstop catches read() on a still-Closed resource
+fired = False; msg = ""
+try:
+    run_src(_bad)
+except ProvisoStateError as ex:
+    fired = True; msg = str(ex)
+check("runtime catches wrong-state op the static pass left gradual", fired, msg)
+check("state error names the op, required and actual state",
+      "read" in msg and "Open" in msg and "Closed" in msg, msg)
+# @State is still erased: a program with no protocols is wholly unaffected
+check("non-protocol programs unaffected (factorial-style)",
+      run_src("fn main() -> Int { 6 }\n")[0] == 6)
+# the showcase example: clean static check, runtime backstop fires
+_ex15 = open(os.path.join(EX, "15_typestate_runtime.pvo"), encoding="utf-8-sig").read()
+d, _ = analyze_src(_ex15)
+check("example 15 type-checks clean (gradual typestate)", d == [], codes(d))
+fired = False
+try:
+    run_src(_ex15)
+except ProvisoStateError:
+    fired = True
+check("example 15 runtime backstop fires", fired)
+
+# --- precise (non-gradual) escaped-continuation types ----------------------- #
+print("precise continuation types:")
+import proviso as _pv2
+from proviso import types as _T
+def _hw_cont_type(src):
+    """Recover the type the checker assigns the resumption binder `k` in a handler."""
+    m = _pv2.parse(src)
+    chk = _pv2.checker.Checker(m, src)
+    # intercept call inference to capture `k`'s type when `k(...)` is checked
+    holder = {}
+    orig = chk._infer_call
+    def spy(e, env):
+        if e.fn == "k" and "k" in env:
+            holder["k"] = env["k"]
+        return orig(e, env)
+    chk._infer_call = spy
+    chk.run()
+    return holder.get("k")
+_src = ("fn main() -> Int { handle { perform Op(0) } "
+        "with { Op(x, k) => k(0) + k(1), return(v) => v } }\n")
+kt = _hw_cont_type(_src)
+check("resumption k is a precise ArrowType (not gradual Fn)",
+      isinstance(kt, _T.ArrowType), type(kt).__name__)
+check("k has a precise Int answer type",
+      isinstance(kt, _T.ArrowType) and isinstance(kt.ret, _T.BaseType)
+      and kt.ret.name == "Int", kt)
+# a multishot resumption across a call boundary still runs (now precisely typed)
+_fb = ("fn worker(n: Int) -> Int { let r = perform Choose(0); n * r }\n"
+       "fn main() -> Int { handle { worker(10) } "
+       "with { Choose(x, k) => k(2) + k(3), return(v) => v } }\n")
+d, _ = analyze_src(_fb)
+check("precise continuation program type-checks clean", d == [], codes(d))
+check("precise multishot resumption runs -> 50", run_src(_fb)[0] == 50, run_src(_fb)[0])
 
 # --- #1: nested / cross-handler effects + escaping continuations ------------- #
 print("nested cross-handler effects:")

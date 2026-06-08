@@ -332,22 +332,32 @@ class Checker:
         bt, be = self._infer(e.body, env)
         handled = {c.op for c in e.clauses}
         eff = {k: v for k, v in be.items() if k not in handled}  # discharge handled ops
-        results = []
-        for c in e.clauses:
-            cenv = dict(env)
-            cenv[c.param] = T.INT()    # operation argument (gradual)
-            cenv[c.kbinder] = T.FUNC   # the multi-shot resumption, a first-class function
-            ct, ce = self._infer(c.body, cenv)
-            eff.update(ce)
-            results.append(ct)
+        # The delimited *answer type*: what resuming the body ultimately yields, after
+        # the `return` clause has transformed it (or just the body type when there is
+        # none). We infer it first so the resumption can be given a precise type.
         if e.ret is not None:
             renv = dict(env)
             renv[e.ret.binder] = bt
-            rt, re = self._infer(e.ret.body, renv)
+            answer_ty, re = self._infer(e.ret.body, renv)
             eff.update(re)
-            results.append(rt)
         else:
-            results.append(bt)
+            answer_ty = bt
+        # A captured resumption `k` is a *precise* first-class function: it is resumed
+        # with the value a `perform` yields (an Int) and produces the delimited answer
+        # type. Typing it as `Fn(Int) -> answer` (rather than the gradual `Fn`) is what
+        # makes an *escaped* continuation -- bound in a `let`, returned, or pulled from a
+        # match, then invoked later -- a statically-typed (non-gradual) call: `k(v)` has
+        # type `answer`, not `?`. The continuation is effect-pure here (any effects it
+        # re-enacts were already collected from the body above).
+        cont_ty = T.ArrowType([T.INT()], answer_ty, [])
+        results = [answer_ty]
+        for c in e.clauses:
+            cenv = dict(env)
+            cenv[c.param] = T.INT()      # operation argument (gradual)
+            cenv[c.kbinder] = cont_ty    # the multi-shot resumption, precisely typed
+            ct, ce = self._infer(c.body, cenv)
+            eff.update(ce)
+            results.append(ct)
         result = results[0]
         for r in results[1:]:
             result = self._join(result, r)
@@ -364,25 +374,103 @@ class Checker:
                 source_line=self.src_line(e.line),
             ))
             return T.UNIT, eff
-        covered: set = set()
-        has_wild = False
         result_ty: Optional[T.Type] = None
         for arm in e.arms:
             arm_env = dict(env)
             self._check_pattern(arm.pattern, st, arm_env)
-            p = arm.pattern
-            if isinstance(p, (N.PatWild, N.PatVar)):
-                has_wild = True
-            elif isinstance(p, N.PatCtor):
-                covered.add(p.name)
             bt, be = self._infer(arm.body, arm_env)
             eff.update(be)
             result_ty = bt if result_ty is None else self._join(result_ty, bt)
-        if not has_wild:
-            missing = [c for c in self.enum_ctors.get(enum_name, []) if c not in covered]
-            if missing:
-                self._non_exhaustive(e, enum_name, missing)
+        # Exhaustiveness, *into nested patterns* (Maranget's usefulness algorithm): is
+        # the all-wildcard vector still useful against the arm matrix? If so it returns a
+        # concrete witness -- an uncovered value, e.g. `Cons(_, Cons(_, _))` -- which is
+        # exactly the missing case the match forgot.
+        witness = self._missing([[arm.pattern] for arm in e.arms], [st])
+        if witness is not None:
+            self._non_exhaustive(e, enum_name, witness[0] if witness else "_")
         return (result_ty or T.UNIT), eff
+
+    # --- exhaustiveness: usefulness of the wildcard vector (Maranget) ------- #
+    def _head_key(self, pat: N.Pattern):
+        """The 'head constructor' of a pattern, or None for a wildcard/binder."""
+        if isinstance(pat, (N.PatWild, N.PatVar)):
+            return None
+        if isinstance(pat, N.PatCtor):
+            return ("ctor", pat.name)
+        if isinstance(pat, N.PatLit):
+            return (pat.kind, pat.value)
+        return None
+
+    def _pat_subs(self, pat: N.Pattern) -> list:
+        if isinstance(pat, N.PatCtor):
+            return list(pat.args)
+        return []
+
+    def _signature_of(self, col: T.Type):
+        """(kind, heads): 'finite' with the full head set, or 'infinite' (literals)."""
+        if isinstance(col, T.DataType) and col.name in self.enums:
+            heads = []
+            for c in self.enum_ctors[col.name]:
+                sig = self.ctors.get(c)
+                ftypes = [t for (_n, t, _l) in sig.params] if sig else []
+                heads.append((("ctor", c), ftypes))
+            return ("finite", heads)
+        if isinstance(col, BaseType) and col.name == "Bool":
+            return ("finite", [(("bool", True), []), (("bool", False), [])])
+        return ("infinite", [])
+
+    def _specialize(self, matrix: list, key, arity: int) -> list:
+        out = []
+        for row in matrix:
+            head = self._head_key(row[0])
+            if head is None:                       # wildcard expands to N wildcards
+                out.append([N.PatWild()] * arity + row[1:])
+            elif head == key:
+                out.append(self._pat_subs(row[0]) + row[1:])
+            # a row with a different head cannot match this constructor -> dropped
+        return out
+
+    def _default(self, matrix: list) -> list:
+        return [row[1:] for row in matrix if self._head_key(row[0]) is None]
+
+    def _missing(self, matrix: list, col_types: list):
+        """Witness (list of pattern strings) for a value matched by no row, or None if
+        the matrix is exhaustive over `col_types`."""
+        if not col_types:
+            return None if matrix else []  # 0 columns: a single empty row covers it
+        col, rest = col_types[0], col_types[1:]
+        present = {k for k in (self._head_key(r[0]) for r in matrix) if k is not None}
+        kind, heads = self._signature_of(col)
+        if kind == "finite" and {k for k, _ in heads} <= present:
+            for key, ftypes in heads:          # complete: every constructor must close
+                w = self._missing(self._specialize(matrix, key, len(ftypes)),
+                                  list(ftypes) + rest)
+                if w is not None:
+                    a = len(ftypes)
+                    return [self._wit_str(key, w[:a])] + w[a:]
+            return None
+        # incomplete (or an open/literal domain): a wildcard column must still close
+        w = self._missing(self._default(matrix), rest)
+        if w is None:
+            return None
+        return [self._missing_head_str(present, kind, heads)] + w
+
+    def _wit_str(self, key, subs: list) -> str:
+        tag, val = key
+        if tag == "ctor":
+            return f"{val}({', '.join(subs)})" if subs else val
+        if tag == "bool":
+            return "true" if val else "false"
+        if tag == "str":
+            return f'"{val}"'
+        return str(val)
+
+    def _missing_head_str(self, present: set, kind: str, heads: list) -> str:
+        if kind == "finite":
+            for key, ftypes in heads:
+                if key not in present:           # show a concrete uncovered constructor
+                    return self._wit_str(key, ["_"] * len(ftypes))
+        return "_"  # open domain (Int/Str/...): any value outside the listed literals
 
     def _check_pattern(self, pat: N.Pattern, ty: T.Type, env: Env) -> None:
         """Type-check a (possibly nested) pattern against `ty`, binding variables."""
@@ -424,23 +512,23 @@ class Checker:
             for sub, (_n, fty, _l) in zip(pat.args, sig.params):
                 self._check_pattern(sub, fty, env)
 
-    def _non_exhaustive(self, e: N.Match, enum_name: str, missing: list) -> None:
-        ms = ", ".join(missing)
+    def _non_exhaustive(self, e: N.Match, enum_name: str, witness: str) -> None:
         self.diags.append(Diagnostic(
             code="non-exhaustive",
             title=f"match on {enum_name} does not cover every case",
             line=e.line,
-            expected=f"arms for all variants of {enum_name}",
-            found=f"missing: {ms}",
-            why=(f"{enum_name} has variants not handled here; at runtime such a value "
+            expected=f"arms covering every value of {enum_name}",
+            found=f"no arm matches `{witness}`",
+            why=(f"this match is not total: the value `{witness}` falls through every "
+                 f"arm (the gap can be nested inside a constructor), so at runtime it "
                  f"would have no matching arm."),
-            counterexample=f"a value built with {missing[0]}(...) matches no arm",
+            counterexample=f"`{witness}` matches no arm",
             choices=[
                 Choice(
-                    label="ADD the missing arms (handle each case)",
-                    explanation="Cover every variant so the match is total and the "
+                    label="ADD an arm for the uncovered case",
+                    explanation="Handle the missing shape so the match is total and the "
                                 "compiler can trust it.",
-                    edit=f"add arms: {'; '.join(m + '(...) => ...' for m in missing)}",
+                    edit=f"{witness} => ...",
                 ),
                 Choice(
                     label="ADD a wildcard `_` arm (catch-all)",

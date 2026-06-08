@@ -1,0 +1,19 @@
+# ── nested-pattern exhaustiveness ─────────────────────────────────────────
+# `pair_first` matches a cons-list of at least two elements -- but it only handles
+# Nil and a Cons whose tail is Nil. A Cons whose tail is itself a Cons falls through
+# every arm. The check recurses *into* the patterns (Maranget's usefulness
+# algorithm) and reports the exact missing shape: `Cons(_, Cons(_, _))` -- the gap
+# nested one level down. Fix it by adding that arm, or a wildcard `_`.
+
+enum List { Nil(), Cons(Int, List) }
+
+fn pair_first(xs: List) -> Int {
+  match xs {
+    Nil() => 0,
+    Cons(a, Nil()) => a
+  }
+}
+
+fn main() -> Int {
+  pair_first(Cons(1, Cons(2, Nil())))
+}

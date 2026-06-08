@@ -38,11 +38,11 @@ proviso/        the implementation (Python, no deps)
   typestate.py                      protocol/typestate state-tracking checker -> Diagnostics (#9)
   diagnostics.py                    the dialogue renderer
   interp.py                         tree-walking interpreter; refinements double as runtime contracts
-  lsp.py                            stdio Language Server: diagnostics + hover (#10)
+  lsp.py                            stdio Language Server: diagnostics + hover + go-to-def (#10)
   cli.py __main__.py                `proviso check|run|lsp`
 examples/   one .pvo per axis, incl. the showcase conflict and the gradual seam
 samples/    runnable programs (factorial, gcd, exceptions, relu, retry_budget, resource)
-tests/run_tests.py   120 dependency-free tests
+tests/run_tests.py   157 dependency-free tests
 ```
 
 ## How to run (from this folder)
@@ -130,7 +130,7 @@ All seven requested features (#1-#7) are implemented. Plus: **strings** (`Str` t
 `"..."` literals with escapes, `+` concat, `==`, `to_str(n)`) and **nested patterns**
 (match patterns are now a recursive `Pattern` AST: PatWild/PatVar/PatLit/PatCtor;
 uppercase-initial idents are constructors, lowercase are binders; literals `0`/`true`/`"x"`
-allowed; exhaustiveness still checked at the top level only). Suite is 55 tests.
+allowed; exhaustiveness recurses into nested patterns -- see the dedicated section below).
 
 Plus **precise function types** `Fn(T, ...) -> T ! {effects}` (ArrowType, FnTypeExpr) with
 **effect-variable polymorphism**: lowercase effect-row names are variables; a HOF's `! e` is
@@ -165,18 +165,34 @@ provably-wrong state is a `typestate` dialogue (required/known state, the line i
 state, and two choices: ADVANCE via the transition op, or STAY and use an op valid in the
 current state). State is gradual: an un-annotated / branch-merged-divergent binding is unknown
 and accepted silently. A state name maps back to its protocol (`state_proto`), so any carrier
-type works. `@State` is erased at runtime (TypeExpr.state; `@` token; `protocol` keyword).
-Lexer/parser/nodes carry it; the main checker ignores `.state` (protocol carrier types resolve
-as ordinary/opaque types). See `samples/typestate.pvo`, `examples/12_typestate.pvo`.
+type works. `@State` is erased from the *type* (TypeExpr.state; `@` token; `protocol` keyword);
+the main checker ignores `.state` (protocol carrier types resolve as ordinary/opaque types).
+See `samples/typestate.pvo`, `examples/12_typestate.pvo`.
+
+**Typestate runtime enforcement [DONE]**: the static pass proves what it can see; for what it
+leaves *gradual* (a resource laundered through an un-annotated region), the runtime is the
+backstop. `typestate.operation_signatures(module)` lowers each decl's `@State` to a
+`RuntimeOpSig` (per-param required `(proto,state)`, the result's produced `(proto,state)`, a
+`has_state` gate). The interpreter carries each protocol value as a `Resource(value, proto,
+state)`: at a protocol-operation call, `call_user` checks every `@State` argument's state
+(`_ts_enter` -> `ProvisoStateError` on a wrong-state use) and unwraps it to the bare carrier
+for the body, then re-tags the result with the produced state (`_ts_wrap`). `Resource` is
+transparent to ordinary operations via `_carrier` (arith/index/match/print/builtins see
+through it); plain functions (no `@State`) are untouched, so state rides on the *value* and
+survives the gradual region the static pass can't follow. See `examples/15_typestate_runtime.pvo`.
 
 **#10 LSP [DONE]**: `proviso lsp` runs a pure-Python (no deps) Language Server over stdio
 (`lsp.py`). JSON-RPC `Content-Length` framing (`read_message`/`write_message`); lifecycle
-(initialize/initialized/shutdown/exit); full-document sync (didOpen/didChange/didSave/didClose);
-`textDocument/publishDiagnostics` re-encodes the *same* Diagnostic/Warning objects the CLI
-renders (`compute_diagnostics` -> LSP dicts, severity Error/Warning, the dialogue in the
-message); `textDocument/hover` (`hover_at`) shows the enclosing function's effect-inferred
-signature. The core (`compute_diagnostics`, `hover_at`, `LspServer.handle` -> list of outgoing
-messages) is data-in/data-out for unit testing without real stdio.
+(initialize/initialized/shutdown/exit); **incremental document sync** (sync kind 2: range-based
+`didChange` edits spliced by `apply_change`/`_offset`, with a full-replace fallback when a
+change carries no `range`); `textDocument/publishDiagnostics` re-encodes the *same*
+Diagnostic/Warning objects the CLI renders (`compute_diagnostics` -> LSP dicts, severity
+Error/Warning, the dialogue in the message); `textDocument/hover` (`hover_at`) shows the
+enclosing function's effect-inferred signature; **`textDocument/definition`** (`definition_at`
++ `_symbols`) jumps from any use of a function / type-alias / enum / constructor / protocol
+name to its declaration (token-under-cursor located via the lexer, declaration line via the
+AST). The core (`compute_diagnostics`, `hover_at`, `definition_at`, `LspServer.handle` -> list
+of outgoing messages) is data-in/data-out for unit testing without real stdio.
 
 **#8 contract erasure + blame [DONE]**: the checker decides per call-site/index whether a
 refinement obligation is proven (erased) or gradual (checked); it annotates the AST
@@ -187,9 +203,30 @@ note naming the unproven call site (line). If a node has no annotation (program 
 the checker), the interpreter checks everything (sound fallback). Tests `run_src`/
 `run_counting` run the checker first so erasure is active. See `samples/erasure.pvo`.
 
+**Nested-pattern exhaustiveness [DONE]**: exhaustiveness now recurses *into* nested patterns
+(Maranget's usefulness algorithm), not just the top-level constructor set. `checker._missing`
+asks whether the all-wildcard vector is still useful against the arm matrix; it specializes
+(`_specialize`) by each constructor of a *complete* column and defaults (`_default`) on an
+incomplete/open one, threading the per-column semantic types (enum field types, `Bool`, or an
+open `Int`/`Str` domain via `_signature_of`). When a gap exists it reconstructs a concrete
+witness -- e.g. `Cons(_, Cons(_, _))`, the missing case nested one level down -- surfaced in
+the `non-exhaustive` dialogue. A wildcard/binder arm still closes a column; literal patterns
+(`Wrap(0)`) leave an open domain. See `examples/14_nested_match.pvo`, `samples/list.pvo`.
+
+**Precise escaped-continuation types [DONE]**: a captured resumption `k` is now typed as a
+*precise* `Fn(Int) -> answer` (ArrowType) rather than the gradual `Fn` marker. In
+`_infer_handle_with` the delimited *answer type* is inferred first (the `return` clause's body
+type, or the handled body's type), and each op-clause binds `k` to `ArrowType([Int], answer)`.
+So calling a continuation -- including one that has *escaped* its handler (let-bound, returned,
+pulled from a match) and is invoked later -- is a statically-typed call (`k(v) : answer`),
+not a deferred gradual one. A genuinely unbound name is still a hard error; a clause that
+returns `k` itself and joins it with a non-function answer degrades to gradual (unavoidable).
+See `examples/13_continuations.pvo`, `samples/continuations.pvo`.
+
 Roadmap (all DONE): #5b len-guard -> #4 array-length -> #3 more measures (abs/min/max) ->
 #8 erasure+blame -> #2 precise function-arg subtyping -> #9 typestate -> #10 LSP ->
-#1 nested cross-handler effects + escaping continuations. Remaining ideas:
-nested-pattern exhaustiveness; typestate runtime enforcement (currently static-only);
-LSP incremental sync + go-to-definition; precise (non-gradual) types for escaped
-continuations.
+#1 nested cross-handler effects + escaping continuations -> nested-pattern exhaustiveness ->
+typestate runtime enforcement -> LSP incremental sync + go-to-definition -> precise
+(non-gradual) escaped-continuation types. Remaining ideas: redundant/unreachable-arm
+detection; typestate runtime enforcement for branch-divergent merges; LSP find-references
+and rename; precise types for continuations that escape through a non-function join.

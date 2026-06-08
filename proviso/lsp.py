@@ -21,10 +21,11 @@ import sys
 from typing import Dict, List, Optional
 
 from .parser import parse, ParseError
-from .lexer import LexError
+from .lexer import LexError, tokenize
 from .checker import Checker
 from .ownership import check_ownership
 from .typestate import check_typestate
+from . import nodes as N
 
 # LSP DiagnosticSeverity
 _ERROR = 1
@@ -131,6 +132,89 @@ def hover_at(text: str, line0: int, _char0: int) -> Optional[dict]:
 
 
 # --------------------------------------------------------------------------- #
+# Go-to-definition: resolve the name under the cursor to its declaration.
+# --------------------------------------------------------------------------- #
+def _symbols(module: N.Module) -> Dict[str, int]:
+    """Every declared name -> the 1-based line it is declared on: functions, type
+    aliases, enums and their constructors, and protocols."""
+    syms: Dict[str, int] = {}
+    for d in module.decls:
+        syms[d.name] = d.line
+    for a in getattr(module, "aliases", []):
+        syms[a.name] = a.line
+    for e in getattr(module, "enums", []):
+        syms[e.name] = e.line
+        for v in e.variants:
+            syms.setdefault(v.name, v.line)  # a constructor jumps to its variant
+    for p in getattr(module, "protocols", []):
+        syms[p.name] = p.line  # states are not standalone declarations
+    return syms
+
+
+def _name_range(text: str, line1: int, name: str) -> Optional[dict]:
+    """An LSP range (0-based) covering `name` on 1-based `line1` (its declaration)."""
+    lines = text.splitlines()
+    idx = line1 - 1
+    if idx < 0 or idx >= len(lines):
+        return None
+    src = lines[idx]
+    col = src.find(name)
+    if col < 0:
+        return {"start": {"line": idx, "character": 0},
+                "end": {"line": idx, "character": len(src)}}
+    return {"start": {"line": idx, "character": col},
+            "end": {"line": idx, "character": col + len(name)}}
+
+
+def definition_at(text: str, line0: int, char0: int) -> Optional[dict]:
+    """The declaration range for the identifier at a 0-based position, or None. Used by
+    `textDocument/definition` -- click a call, an enum, a constructor or a protocol name
+    and jump to where it is declared."""
+    try:
+        toks = tokenize(text)
+    except LexError:
+        return None
+    line1, col1 = line0 + 1, char0 + 1
+    name = None
+    for t in toks:
+        if (t.kind == "ident" and t.line == line1
+                and t.col <= col1 <= t.col + len(t.value)):
+            name = t.value
+            break
+    if name is None:
+        return None
+    try:
+        module = parse(text)
+    except (ParseError, LexError):
+        return None
+    decl_line = _symbols(module).get(name)
+    if decl_line is None:
+        return None
+    return _name_range(text, decl_line, name)
+
+
+# --------------------------------------------------------------------------- #
+# Incremental document sync: apply range-based edits to the stored text.
+# --------------------------------------------------------------------------- #
+def _offset(text: str, line0: int, char0: int) -> int:
+    """Absolute index into `text` for a 0-based (line, character) position."""
+    lines = text.split("\n")
+    off = sum(len(lines[i]) + 1 for i in range(min(line0, len(lines))))
+    return off + char0
+
+
+def apply_change(text: str, change: dict) -> str:
+    """Apply one `contentChanges` entry. With a `range` it is an incremental edit
+    (LSP sync kind 2); without one it is a full-document replacement (kind 1)."""
+    rng = change.get("range")
+    if rng is None:
+        return change["text"]
+    start = _offset(text, rng["start"]["line"], rng["start"]["character"])
+    end = _offset(text, rng["end"]["line"], rng["end"]["character"])
+    return text[:start] + change["text"] + text[end:]
+
+
+# --------------------------------------------------------------------------- #
 # The server: dispatch LSP messages to lists of outgoing messages.
 # --------------------------------------------------------------------------- #
 class LspServer:
@@ -145,8 +229,10 @@ class LspServer:
         if method == "initialize":
             return [self._respond(mid, {
                 "capabilities": {
-                    "textDocumentSync": 1,   # 1 = full document sync
+                    # 2 = incremental sync (range-based edits); falls back to full
+                    "textDocumentSync": {"openClose": True, "change": 2, "save": True},
                     "hoverProvider": True,
+                    "definitionProvider": True,
                 },
                 "serverInfo": {"name": "proviso-lsp", "version": "1.0.0"},
             })]
@@ -167,8 +253,10 @@ class LspServer:
         if method == "textDocument/didChange":
             uri = msg["params"]["textDocument"]["uri"]
             changes = msg["params"].get("contentChanges", [])
-            if changes:  # full sync: the last change carries the whole document
-                self.docs[uri] = changes[-1]["text"]
+            text = self.docs.get(uri, "")
+            for ch in changes:  # incremental edits applied in order (full replace if no range)
+                text = apply_change(text, ch)
+            self.docs[uri] = text
             return [self._publish(uri)]
         if method == "textDocument/didClose":
             uri = self._uri(msg)
@@ -181,6 +269,13 @@ class LspServer:
             text = self.docs.get(uri, "")
             hov = hover_at(text, pos["line"], pos["character"])
             return [self._respond(mid, hov)]
+        if method == "textDocument/definition":
+            uri = self._uri(msg)
+            pos = msg["params"]["position"]
+            text = self.docs.get(uri, "")
+            rng = definition_at(text, pos["line"], pos["character"])
+            result = {"uri": uri, "range": rng} if rng is not None else None
+            return [self._respond(mid, result)]
         if mid is not None:
             return [self._respond(mid, None)]  # unknown request -> empty result
         return []

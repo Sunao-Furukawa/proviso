@@ -158,8 +158,10 @@ not an oversight):
   passed through a function parameter is not tracked (the param is gradual).
 - **User-defined types** — `enum`s with constructors and `match` (single-variant = record),
   with exhaustiveness reported as a dialogue. Patterns **nest** (`Cons(a, Cons(b, rest))`)
-  and allow constructor / variable / wildcard / literal patterns; exhaustiveness is checked
-  at the top level. Plus **strings** (`Str`, `"..."`, `+`, `==`, `to_str`).
+  and allow constructor / variable / wildcard / literal patterns; exhaustiveness **recurses
+  into nested patterns** (Maranget's algorithm) and reports a concrete missing case such as
+  `Cons(_, Cons(_, _))` (`examples/14_nested_match.pvo`). Plus **strings** (`Str`, `"..."`,
+  `+`, `==`, `to_str`).
 - **First-class functions** (lambdas, `Fn`-typed params) and **algebraic effects** —
   `perform Op(x)` + `handle … with { Op(x, k) => …, return(v) => … }`, on a CPS evaluator
   so the resumption `k` is **fully multi-shot** (`k(0) + k(10)` resumes twice). Operation
@@ -173,18 +175,22 @@ not an oversight):
 - **Typestate** — `protocol File { Closed, Open }` plus `@State` annotations on operations
   (`fn open(f: Handle @ Closed) -> Handle @ Open`) track a resource's state through its type;
   calling an operation in the wrong state is rejected with the dialogue (required/known state +
-  ADVANCE/STAY choices). State is gradual (unknown ⇒ accepted) and erased at runtime. See
-  `samples/typestate.pvo` / `examples/12_typestate.pvo`.
+  ADVANCE/STAY choices). State is gradual (unknown ⇒ accepted) statically, and for the gradual
+  cases the static pass can't follow it is enforced at **runtime** (the value carries its state;
+  a wrong-state call raises). `@State` is erased from the type. See `samples/typestate.pvo` /
+  `examples/12_typestate.pvo` / `examples/15_typestate_runtime.pvo`.
 - **Editor support** — `proviso lsp` is a dependency-free Language Server (stdio) that
-  publishes the dialogue diagnostics live and answers hover with the enclosing function's
-  effect-inferred signature. A ready-to-use VS Code client is in
-  [`editors/vscode/`](editors/vscode/) (setup in its README).
+  publishes the dialogue diagnostics live, answers hover with the enclosing function's
+  effect-inferred signature, supports **go-to-definition** (functions, type aliases, enums,
+  constructors, protocols) and **incremental document sync**. A ready-to-use VS Code client is
+  in [`editors/vscode/`](editors/vscode/) (setup in its README).
 - **Trampolined evaluator** — the CPS interpreter returns thunks driven by a loop, so deep
   recursion (e.g. `sumto(100000)`) stays flat instead of overflowing the Python stack.
 - **Algebraic effects** compose without restriction: handlers **nest**, an effect performed
   inside a called function is caught by the caller's handler, resumptions are **multi-shot**,
   and a captured continuation may **escape** its handler (be bound, returned, or stored) and
-  be invoked later — calling such a continuation type-checks as a gradual call. See
+  be invoked later — such a resumption has a **precise** `Fn(Int) -> answer` type, so calling
+  it is a statically-typed (non-gradual) call. See
   `samples/continuations.pvo` / `examples/13_continuations.pvo`.
 - **Ownership** uses a simple "any use moves; borrow/clone read" model over straight-line
   code and `if`; no region/lifetime inference yet.

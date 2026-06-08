@@ -1,0 +1,27 @@
+# ── #9 typestate, enforced at *runtime* ───────────────────────────────────
+# The static pass proves typestate away when it can see the flow. Here the handle
+# `g` is laundered through `relabel`, an un-annotated (`H`, no `@State`) function, so
+# the static pass loses track of its state and -- being gradual -- lets the program
+# compile. At runtime the value still carries its state: it is `Closed`, so calling
+# `read` (which needs `Open`) is caught by the runtime backstop, naming the operation,
+# the state it required, and the state the resource was actually in.
+#
+# Run it:  python -m proviso run examples/15_typestate_runtime.pvo
+#          -> runtime error: typestate violation ... `read` needs ... `Open` ... `Closed`
+
+enum H { H(Int) }
+
+protocol File { Closed, Open }
+
+fn make() -> H @ Closed { H(0) }
+fn open(f: H @ Closed) -> H @ Open { f }
+fn read(f: H @ Open) -> H @ Open { f }
+
+fn relabel(f: H) -> H { f }   # un-annotated: the static state is erased here
+
+fn main() -> Int {
+  let f = make();        # Closed
+  let g = relabel(f);    # state now statically unknown (gradual) -- but still Closed
+  let h = read(g);       # runtime backstop: read needs Open, g is Closed
+  0
+}

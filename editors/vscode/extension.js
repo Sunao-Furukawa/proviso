@@ -2,7 +2,14 @@
 //
 //   * a "Proviso: Run Current File" command that runs the open `.pvo` with
 //     `proviso run` in an integrated terminal (bound to F5 / Ctrl+F5 for `.pvo`);
-//   * a language server (`proviso lsp`) for live diagnostics + hover.
+//   * a language server (`proviso lsp`) for live diagnostics + hover, plus
+//     go-to-definition and incremental document sync.
+//
+// Note: go-to-definition (F12) and incremental sync are not wired up by hand here --
+// `vscode-languageclient` registers a definition provider and switches to incremental
+// edits automatically from the server's advertised capabilities (`definitionProvider`,
+// `textDocumentSync.change = 2`). So a *generic* client already exposes them; this file
+// only needs to launch `proviso lsp` and keep "run" working.
 //
 // The run command is registered FIRST and the language server is started lazily in a
 // try/catch, so syntax highlighting and "run" keep working even if the bundled

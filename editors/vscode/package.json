@@ -1,8 +1,8 @@
 {
   "name": "proviso",
   "displayName": "Proviso",
-  "description": "Language support for Proviso (.pvo): syntax highlighting, live dialogue diagnostics, hover, and run.",
-  "version": "1.0.2",
+  "description": "Language support for Proviso (.pvo): syntax highlighting, live dialogue diagnostics, hover, go-to-definition, and run.",
+  "version": "1.1.0",
   "publisher": "proviso",
   "engines": { "vscode": "^1.75.0" },
   "categories": ["Programming Languages"],

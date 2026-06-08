@@ -7,10 +7,13 @@ A VS Code extension that gives you, for `.pvo` files:
 - **live diagnostics** — the same dialogue (required / known / why / counterexample /
   two choices) the CLI prints, shown inline as you type, with gradual points as warnings;
 - **hover** — the enclosing function's effect-inferred signature;
+- **go-to-definition** — F12 / Ctrl-click jumps from a use of a function, type alias,
+  enum, constructor, or protocol to its declaration;
+- **incremental sync** — edits are streamed to the server as range-based deltas;
 - **run** — *Proviso: Run Current File* runs the open `.pvo` with `proviso run`.
 
-Highlighting works on its own; diagnostics and hover are powered by the Proviso language
-server (`proviso lsp`).
+Highlighting works on its own; diagnostics, hover, and go-to-definition are powered by the
+Proviso language server (`proviso lsp`).
 
 > **You do not press F5 to *use* the extension.** Once installed, just open a `.pvo`
 > file — highlighting, diagnostics, and hover are automatic. Plain **F5 = Start
@@ -71,8 +74,8 @@ Press **F5** ("Run Proviso Extension"). A second VS Code window opens — open a
 cd editors/vscode
 npm install                        # REQUIRED before packaging (bundles vscode-languageclient)
 npm install -g @vscode/vsce
-vsce package                       # produces proviso-1.0.2.vsix
-code --install-extension proviso-1.0.2.vsix
+vsce package                       # produces proviso-1.1.0.vsix
+code --install-extension proviso-1.1.0.vsix
 ```
 
 `npm install` **must** run before `vsce package` — otherwise `node_modules` is not
@@ -112,7 +115,7 @@ Example `settings.json`:
   always because the packaged `.vsix` is missing `node_modules` (the
   `vscode-languageclient` dependency). Repackage with `npm install` first:
   `cd editors/vscode && npm install && vsce package`, then reinstall
-  (`code --install-extension proviso-1.0.2.vsix --force`) and reload the window. From
+  (`code --install-extension proviso-1.1.0.vsix --force`) and reload the window. From
   v1.0.2 the run command and highlighting keep working even if the language server can't
   load (you'll get a warning instead of a dead extension).
 - **No diagnostics appear.** Open *Output → Proviso* (and *Output → Proviso Language
@@ -121,11 +124,16 @@ Example `settings.json`:
   correct program has *no* diagnostics; test with `examples/03_conflict.pvo`, which must
   show a red squiggle.
 - **`python` not found.** Set `proviso.pythonPath` to a full path.
-- **Diagnostics are stale.** They refresh on edit and save; this client uses
-  full-document sync.
+- **Diagnostics are stale.** They refresh on edit and save; this client streams
+  incremental edits to the server (LSP sync kind 2).
+- **Go-to-definition does nothing.** It needs the language server running (step 1) — it is
+  served by `proviso lsp`, not by the grammar. Confirm the server is up via *Output →
+  Proviso*. Updating an *already-installed* extension to a newer `proviso` package is
+  enough: the client reads the server's capabilities at connect time, so definition and
+  incremental sync light up without rebuilding the `.vsix`.
 
 ## What this extension does *not* do (yet)
 
-Go-to-definition, completion, and incremental document sync. Diagnostics and hover come
+Completion, find-references, and rename. Diagnostics, hover, and go-to-definition come
 straight from `proviso/lsp.py`; the highlighting grammar is
 `syntaxes/proviso.tmLanguage.json`.

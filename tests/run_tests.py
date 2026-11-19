@@ -854,6 +854,10 @@ check("continuations sample type-checks clean", codes(analyze_src(_cs)[0]) == []
 r, o = run_src(_cs)
 check("continuations sample runs -> 42 with [20]", r == 42 and o == ["20"], (r, o))
 
+# --- standard library + imports (tests/std_tests.py) ---------------------- #
+exec(compile(open(os.path.join(ROOT, "tests", "std_tests.py"), encoding="utf-8").read(),
+             os.path.join(ROOT, "tests", "std_tests.py"), "exec"))
+
 print()
 print(f"{_passed} passed, {_failed} failed")
 sys.exit(1 if _failed else 0)

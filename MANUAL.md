@@ -637,6 +637,17 @@ non-fatal `gradual[cast]` warnings.
 
 `print` is intentionally polymorphic: it accepts any base type (`Int`, `Bool`, `Str`, …).
 
+### The standard library (`std`)
+
+Beyond these builtins, Proviso ships a libc-style standard library written in Proviso
+(`proviso/std/*.pvo`): `import std.string;` for one module, `import std;` for all of them,
+`import "util.pvo";` for your own files. Modules: `std.math`, `std.ctype`, `std.string`,
+`std.array`, `std.list`, `std.option`, `std.errno`, `std.io`, `std.file` (a typestate-checked
+`Writer`), `std.stdlib`, `std.time`. Library preconditions are refinements (misuse is a dialogue
+at your call site), failures travel through `Exc` with glibc errno codes, and higher-order
+functions are effect-polymorphic. See the README's *Standard library* section and
+`proviso doc std.<module>` for the full API.
+
 ---
 
 ## 19. Tooling: CLI, solver, editor
@@ -646,6 +657,7 @@ non-fatal `gradual[cast]` warnings.
 ```sh
 proviso check <file.pvo>   # static analysis only (types, effects, ownership, typestate)
 proviso run   <file.pvo>   # check, then run main (refuses to run on hard errors)
+proviso doc [std.module]   # list std modules / show a module's API and doc comments
 proviso lsp                # language server over stdio
 ```
 

@@ -1,0 +1,49 @@
+# A tour of the standard library (proviso/std). `import std;` links all of it, the way
+# a C program links libc; `proviso doc` lists the modules and their functions.
+
+import std;
+
+fn square(x: Int) -> Int { x * x }
+fn positive(x: Int) -> Bool { x > 0 }
+fn add(a: Int, b: Int) -> Int { a + b }
+fn desc(a: Int, b: Int) -> Int { b - a }
+
+fn main() -> Int ! {IO} {
+  # std.string + std.ctype
+  let csv = "  alice,bob,carol  ";
+  let names = str_split(str_trim(csv), ",");
+  puts(str_join(names, " / "));                              # alice / bob / carol
+  puts(str_to_upper(strlist_nth(names, 1)));                  # BOB
+  puts(str_pad_left(to_str(42), 6, "0"));                     # 000042
+  print(str_to_int_or("-17", 0) + str_to_int_or("oops", 100)); # 83
+
+  # std.io: a type-safe printf ("{}" holes, Int arguments)
+  printfln("{} + {} = {}", [2, 3, 5]);                        # 2 + 3 = 5
+
+  # std.math
+  printfln("gcd={} lcm={} isqrt={}", [gcd(84, 36), lcm(4, 6), isqrt(1000)]);
+  printfln("2^20={} 20!={}", [pow(2, 20), factorial(20)]);
+
+  # std.array: effect-polymorphic map/filter/fold and a merge sort
+  let xs = [5, 0 - 3, 8, 1, 0 - 7, 4];
+  puts(arr_to_str(arr_sort(xs)));                             # [-7, -3, 1, 4, 5, 8]
+  puts(arr_to_str(arr_sort_by(xs, desc)));                    # [8, 5, 4, 1, -3, -7]
+  puts(arr_to_str(arr_map(arr_filter(xs, positive), square))); # [25, 64, 1, 16]
+  print(arr_fold(xs, 0, add));                                # 8
+  print(arr_bsearch(arr_sort(xs), 4));                        # 3
+
+  # std.list + std.option: absence is a value the match checker makes you handle
+  let ys = list_from_array([10, 20, 30]);
+  puts(opt_to_str(list_nth(ys, 1)));                          # Some(20)
+  puts(opt_to_str(list_nth(ys, 9)));                          # None
+  puts(list_to_str(list_reverse(ys)));                        # [30, 20, 10]
+
+  # std.errno: failures travel through the Exc effect, caught here
+  let code = handle { str_to_int("12x") } catch (e) { e };
+  puts("str_to_int failed: " + strerror(code));               # Invalid argument
+
+  # std.stdlib: reproducible pseudo-random numbers (pure LCG state)
+  let r = rand_next(2026);
+  print(rand_below(r, 6) + 1);                                # a die roll, same every run
+  0
+}

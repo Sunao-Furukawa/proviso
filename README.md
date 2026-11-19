@@ -44,9 +44,56 @@ python -m proviso check examples/05_ownership.pvo    # use-after-move, explained
 python -m proviso run   examples/06_gradual_cast.pvo # gradual seam: deferred runtime check
 python -m proviso check examples/12_typestate.pvo    # typestate: an op called in the wrong state
 python -m proviso run   examples/13_continuations.pvo # nested, cross-handler algebraic effects
+python -m proviso run   samples/stdlib_tour.pvo       # the standard library (import std;)
+python -m proviso check examples/16_stdlib_contracts.pvo # library preconditions at your call site
+python -m proviso doc   std.string                    # browse a std module's API
 python -m proviso lsp                                 # language server (stdio) for your editor
 python tests/run_tests.py
 ```
+
+## Standard library (`proviso/std`)
+
+Proviso ships a libc-style standard library, written **in Proviso itself** on top of a
+small set of `__`-prefixed *intrinsics* (the analogue of the syscalls glibc wraps):
+
+```proviso
+import std.string;          # one module ...
+import std;                 # ... or all of them (std.prelude)
+import "util.pvo";          # your own file, relative to this one
+```
+
+| module        | C counterpart                    | highlights |
+|---------------|----------------------------------|------------|
+| `std.math`    | `<math.h>`, `<stdlib.h>`         | `min max clamp pow pow_mod gcd lcm isqrt factorial fib is_prime div_trunc` |
+| `std.ctype`   | `<ctype.h>`                      | `is_digit is_alpha is_space ... to_upper to_lower ord chr` |
+| `std.string`  | `<string.h>`, `atoi`/`strtol`    | `str_find str_replace str_split str_join str_trim str_to_int str_pad_left` |
+| `std.array`   | `memset`/`qsort`/`bsearch`       | `arr_sort arr_sort_by arr_bsearch arr_map arr_filter arr_fold arr_slice` |
+| `std.list`    | -                                | `IntList`, `list_map list_filter list_reverse list_nth` |
+| `std.option`  | sentinels / `NULL`               | `Option`, `Result`, `opt_unwrap_or res_unwrap ...` |
+| `std.errno`   | `<errno.h>`, `strerror`          | `ENOENT() EINVAL() ... strerror` |
+| `std.io`      | `<stdio.h>`                      | `puts printf format read_line read_int read_file write_file` |
+| `std.file`    | `FILE*`                          | `fopen_write fwrite fclose` - open/close enforced by **typestate** |
+| `std.stdlib`  | `<stdlib.h>`, `<assert.h>`       | `exit abort assert getenv atoi rand_next rand_below` |
+| `std.time`    | `<time.h>`                       | `clock_ms elapsed_ms` |
+
+What makes it Proviso rather than a libc port:
+
+- **Preconditions are types.** `pow(b, e: Int{e | e >= 0})`, `exit(c: Int{c | c >= 0 && c <= 255})`:
+  misuse is a dialogue at *your* call site, not a crash inside the library
+  (`examples/16_stdlib_contracts.pvo`).
+- **Failure is an effect, not `errno`.** `str_to_int`, `read_file`, `read_line` carry `Exc`
+  in their row; the codes are the glibc errno values; forgetting to handle them is an
+  `effect-leak`. Console is `IO`, filesystem `FS`, `exit` is `Exit`, clock `Clock`,
+  environment `Env`.
+- **Higher-order functions are effect-polymorphic.** `arr_map(xs, f)` has exactly `f`'s effects.
+- **No hidden state.** `rand_next(seed)` is glibc's LCG as a pure function; you thread the state.
+- **A `FILE*` you can't misuse.** Writing after `fclose` is a static typestate error.
+
+`proviso doc` lists the modules; `proviso doc std.string` prints a module's signatures
+(including inferred effect rows) and doc comments. Like C, linking is one flat namespace:
+defining a name the library also defines is a link error that names both sites. Library
+helpers are `_module_name`; intrinsics are `__name` and are not meant for user code.
+See `samples/stdlib_tour.pvo` and `samples/files.pvo`.
 
 ## The one idea: a refinement is a guarantee you may or may not have paid for
 
@@ -128,7 +175,8 @@ block  := { (let [linear] x [: T] = e;  |  e;)* eTrailing? }
 e      := literal | x | e binop e | f(args) | if e {..} else {..}
         | handle {..} catch (x) {..}        # discharges the Exc effect
 builtins: print (IO), throw (Exc), abs (pure, proven >=0),
-          http_get (Net, retries<=3), borrow, clone
+          http_get (Net, retries<=3), borrow, clone, len, to_str
+module := (import std.NAME; | import "file.pvo"; | fn | type | enum | protocol)*
 ```
 
 ## Scope & honesty
@@ -194,7 +242,9 @@ not an oversight):
   `samples/continuations.pvo` / `examples/13_continuations.pvo`.
 - **Ownership** uses a simple "any use moves; borrow/clone read" model over straight-line
   code and `if`; no region/lifetime inference yet.
-- Only `Int`/`Bool`/`Unit`; no user types, generics, or strings.
+- **No generics yet**: arrays, `IntList`, `Option` and `Result` hold `Int` (`StrList` holds
+  `Str`), so the standard library is monomorphic. There are no namespaces either: like C,
+  one flat global namespace, with library names prefixed by module (`str_`, `arr_`, `list_`).
 
 The point of the prototype is to make the *interactions* between the three axes — and the
 diagnostic experience — concrete and runnable, so the design can be felt rather than

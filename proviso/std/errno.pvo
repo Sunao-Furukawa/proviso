@@ -1,0 +1,38 @@
+# std.errno -- error codes (<errno.h>) and their messages (strerror).
+#
+# Proviso has no global `errno`: a failing library function *throws* the code through
+# the `Exc` effect, so the possibility of failure is visible in its signature, and the
+# caller discharges it with `handle { ... } catch (e) { ... }`. These constants are the
+# Linux/glibc values, so codes mean the same thing they mean in C.
+
+## Operation not permitted.
+fn EPERM() -> Int { 1 }
+## No such file or directory.
+fn ENOENT() -> Int { 2 }
+## Input/output error.
+fn EIO() -> Int { 5 }
+## Permission denied.
+fn EACCES() -> Int { 13 }
+## Invalid argument.
+fn EINVAL() -> Int { 22 }
+## Numerical argument out of domain.
+fn EDOM() -> Int { 33 }
+## Numerical result out of range.
+fn ERANGE() -> Int { 34 }
+## No data available (used for end-of-input).
+fn ENODATA() -> Int { 61 }
+
+## A human-readable message for an error code (strerror).
+fn strerror(code: Int) -> Str {
+  if code == 0 { "Success" } else {
+  if code == 1 { "Operation not permitted" } else {
+  if code == 2 { "No such file or directory" } else {
+  if code == 5 { "Input/output error" } else {
+  if code == 13 { "Permission denied" } else {
+  if code == 22 { "Invalid argument" } else {
+  if code == 33 { "Numerical argument out of domain" } else {
+  if code == 34 { "Numerical result out of range" } else {
+  if code == 61 { "No data available" } else {
+    "Unknown error " + to_str(code)
+  } } } } } } } } }
+}

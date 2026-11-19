@@ -1,0 +1,24 @@
+# The standard library's preconditions are *types*, so misuse is caught at YOUR call
+# site with the usual dialogue -- not as a crash deep inside the library.
+#
+#   python -m proviso check examples/16_stdlib_contracts.pvo
+#
+# Expected: three conflicts --
+#   refine-conflict  pow's exponent must be >= 0         (std.math)
+#   refine-conflict  exit status must be in 0..255       (std.stdlib)
+#   typestate        fwrite on a Writer already closed   (std.file)
+
+import std.math;
+import std.stdlib;
+import std.file;
+
+fn main() -> Int ! {IO, FS, Exc, Exit} {
+  print(pow(2, 0 - 1));                  # exp: Int{e | e >= 0}, counterexample -1
+
+  let linear w = fopen_write("out.txt");
+  let linear w = fclose(w);              # Writer @ WClosed
+  let linear w = fwrite(w, "too late");  # needs WOpen
+
+  exit(300);                             # code: Int{c | c >= 0 && c <= 255}
+  0
+}

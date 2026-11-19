@@ -80,8 +80,11 @@ class Parser:
         aliases = []
         enums = []
         protocols = []
+        imports = []
         while not self.at("eof"):
-            if self.at("kw", "type"):
+            if self.at("kw", "import"):
+                imports.append(self.parse_import())
+            elif self.at("kw", "type"):
                 aliases.append(self.parse_alias())
             elif self.at("kw", "enum"):
                 enums.append(self.parse_enum())
@@ -89,7 +92,19 @@ class Parser:
                 protocols.append(self.parse_protocol())
             else:
                 decls.append(self.parse_fn())
-        return N.Module(decls, aliases, enums, protocols)
+        return N.Module(decls, aliases, enums, protocols, imports)
+
+    def parse_import(self) -> N.ImportDecl:
+        kw = self.eat("kw", "import")
+        if self.at("str"):
+            target = self.eat("str").value
+            self.accept("sym", ";")
+            return N.ImportDecl(target, True, kw.line)
+        parts = [self.eat("ident").value]
+        while self.accept("sym", "."):
+            parts.append(self.eat("ident").value)
+        self.accept("sym", ";")
+        return N.ImportDecl(".".join(parts), False, kw.line)
 
     def parse_protocol(self) -> N.ProtocolDecl:
         kw = self.eat("kw", "protocol")
@@ -589,5 +604,5 @@ class Parser:
         raise ParseError(f"unexpected {t.value!r}", t.line, t.col)
 
 
-def parse(src: str) -> N.Module:
-    return Parser(tokenize(src)).parse_module()
+def parse(src: str, first_line: int = 1) -> N.Module:
+    return Parser(tokenize(src, first_line)).parse_module()

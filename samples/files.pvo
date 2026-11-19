@@ -1,0 +1,27 @@
+# File I/O with std.file's typestate-checked Writer and std.io's whole-file helpers.
+# The Writer must go WOpen -> WClosed; writing after `fclose` is rejected statically
+# (see examples/16_stdlib_contracts.pvo). `main`'s row shows exactly what it touches.
+
+import std.file;
+import std.io;
+import std.string;
+import std.errno;
+
+fn main() -> Int ! {IO, FS, Exc} {
+  let path = "proviso_files_demo.txt";
+  let linear w = fopen_write(path);            # Writer @ WOpen
+  let linear w = fwrite_line(w, "first line");
+  let linear w = fwrite_line(w, "second line");
+  let linear w = fclose(w);                    # flushed to disk; Writer @ WClosed
+
+  append_file(path, "third line\n");
+  let lines = read_lines(path);
+  printfln("{} lines", [strlist_len(lines)]);  # 3 lines
+  puts(strlist_nth(lines, 2));                 # third line
+
+  remove_file(path);
+  # a missing file is an ENOENT the caller can handle -- no NULL to forget to check
+  let msg = handle { read_file(path) } catch (e) { strerror(e) };
+  puts(msg);                                   # No such file or directory
+  strlist_len(lines)
+}

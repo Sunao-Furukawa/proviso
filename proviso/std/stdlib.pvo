@@ -1,0 +1,72 @@
+# std.stdlib -- exit/abort/assert, getenv, atoi and rand (<stdlib.h>, <assert.h>).
+#
+# The numeric conversions (atoi, strtol) are in std.string, sorting and
+# searching (qsort, bsearch) in std.array, and integer math (abs, div) in std.math.
+
+import std.string;
+
+## Terminate the program with status `code` (0..255), like exit(3).
+fn exit(code: Int{c | c >= 0 && c <= 255}) -> Unit ! {Exit} {
+  __exit(code)
+}
+
+## Terminate abnormally (status 134, as glibc's abort() yields through SIGABRT).
+fn abort() -> Unit ! {Exit} {
+  __exit(134)
+}
+
+## If `cond` is false, report `msg` and abort (assert(3)).
+fn assert(cond: Bool, msg: Str) -> Unit ! {IO, Exit} {
+  if !cond {
+    print("assertion failed: " + msg);
+    __exit(134)
+  }
+}
+
+## The value of environment variable `name`, or "" if it is unset (getenv).
+fn getenv(name: Str) -> Str ! {Env} {
+  __getenv(name)
+}
+
+## The value of environment variable `name`, or `default` if it is unset or empty.
+fn getenv_or(name: Str, default: Str) -> Str ! {Env} {
+  let v = __getenv(name);
+  if v == "" { default } else { v }
+}
+
+## Parse a decimal integer, 0 if malformed (atoi).
+fn atoi(s: Str) -> Int {
+  str_to_int_or(s, 0)
+}
+
+## The decimal rendering of `n`.
+fn itoa(n: Int) -> Str {
+  to_str(n)
+}
+
+# --- pseudo-random numbers ------------------------------------------------------- #
+# Randomness is *pure*: the generator state is an ordinary Int you thread through, so
+# a run is reproducible and no hidden global makes functions secretly effectful. This
+# is glibc's TYPE_0 linear congruential generator (the classic rand()/srand()).
+
+## The largest value rand_next can return.
+fn RAND_MAX() -> Int { 2147483647 }
+
+## The state after `seed` (srand(seed); rand()), in [0, RAND_MAX].
+fn rand_next(seed: Int) -> Int{r | r >= 0} {
+  (seed * 1103515245 + 12345) % 2147483648
+}
+
+## A value in [0, n) derived from generator state `state` (n > 0).
+fn rand_below(state: Int, n: Int{k | k > 0}) -> Int {
+  (state / 65536) % n
+}
+
+## `count` successive states starting after `seed`, as an array.
+fn rand_array(seed: Int, count: Int{k | k >= 0}) -> Array {
+  _stdlib_rand_array(rand_next(seed), count)
+}
+
+fn _stdlib_rand_array(state: Int, count: Int) -> Array {
+  if count <= 0 { [] } else { __arr_concat([state], _stdlib_rand_array(rand_next(state), count - 1)) }
+}

@@ -54,7 +54,7 @@
         { "name": "storage.modifier.proviso", "match": "\\b(linear)\\b" },
         {
           "name": "keyword.declaration.proviso",
-          "match": "\\b(fn|let|type|enum|protocol)\\b"
+          "match": "\\b(fn|let|type|enum|protocol|import)\\b"
         }
       ]
     },

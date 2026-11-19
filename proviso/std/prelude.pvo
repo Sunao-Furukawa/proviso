@@ -1,0 +1,18 @@
+# std.prelude -- the whole standard library in one import.
+#
+#     import std;            # shorthand for `import std.prelude;`
+#
+# Like linking all of libc: convenient for scripts, but it claims every library name,
+# so larger programs usually import just the modules they use.
+
+import std.math;
+import std.ctype;
+import std.string;
+import std.array;
+import std.option;
+import std.list;
+import std.errno;
+import std.io;
+import std.file;
+import std.stdlib;
+import std.time;

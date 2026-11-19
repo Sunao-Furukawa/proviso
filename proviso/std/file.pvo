@@ -1,0 +1,48 @@
+# std.file -- buffered file writers whose open/close discipline is a *typestate*.
+#
+# In C, writing to a FILE* after fclose() is undefined behaviour that the compiler
+# never sees. Here a `Writer` moves through the `WriterState` protocol:
+#
+#     fopen_write(path)  ->  Writer @ WOpen
+#     fwrite(w, s)       :   WOpen -> WOpen
+#     fclose(w)          :   WOpen -> WClosed   (flushes to disk: FS, may throw EIO)
+#
+# Bind writers with `let linear`, and the static typestate pass reports a write after
+# close as a dialogue (ADVANCE / STAY); where the state is not statically visible, the
+# runtime checks it instead. Nothing touches the disk until `fclose`.
+
+## A buffered writer: the target path and the text written so far.
+enum Writer { Writer(Str, Str) }
+
+## The states a Writer moves through.
+protocol WriterState { WOpen, WClosed }
+
+## Open a writer that will (re)create `path` when closed.
+fn fopen_write(path: Str) -> Writer @ WOpen {
+  Writer(path, "")
+}
+
+## Buffer `s` (fputs).
+fn fwrite(w: Writer @ WOpen, s: Str) -> Writer @ WOpen {
+  match w { Writer(p, buf) => Writer(p, buf + s) }
+}
+
+## Buffer `s` followed by a newline.
+fn fwrite_line(w: Writer @ WOpen, s: Str) -> Writer @ WOpen {
+  match w { Writer(p, buf) => Writer(p, buf + s + "\n") }
+}
+
+## How many characters are buffered (ftell).
+fn fpending(w: Writer @ WOpen) -> Int {
+  match w { Writer(_, buf) => __str_len(buf) }
+}
+
+## Flush the buffer to disk and close. Throws EIO (5) if the write fails.
+fn fclose(w: Writer @ WOpen) -> Writer @ WClosed ! {FS, Exc} {
+  match w {
+    Writer(p, buf) => {
+      if !__file_write(p, buf) { throw(5) };
+      Writer(p, "")
+    }
+  }
+}

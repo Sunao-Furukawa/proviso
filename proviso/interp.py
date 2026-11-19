@@ -28,6 +28,14 @@ class ProvisoRuntimeError(Exception):
     pass
 
 
+class ProvisoExit(Exception):
+    """`exit(code)` from std.stdlib (the `__exit` intrinsic): unwinds the whole program."""
+
+    def __init__(self, code: int):
+        super().__init__(code)
+        self.code = code
+
+
 class ProvisoCastError(ProvisoRuntimeError):
     """A runtime refinement check failed -- the 'pay later' bill came due."""
 
@@ -152,6 +160,8 @@ class Interpreter:
         self.ctors = {v.name for e in getattr(module, "enums", []) for v in e.variants}
         self.ts_sigs = operation_signatures(module)  # #9: runtime typestate contracts
         self.output: List[str] = []
+        self._partial = ""   # text written by `__write` that has no newline yet
+        self.stdin = None    # None => sys.stdin (tests may substitute a StringIO)
         self.checks_performed = 0  # #8: counts runtime contract checks actually run
 
     def _sem_type(self, te: Optional[N.TypeExpr]) -> T.Type:
@@ -247,9 +257,12 @@ class Interpreter:
             return str(args[0])
         if name == "print":
             line = str(_show(args[0]))
-            self.output.append(line)
+            self.output.append(self._partial + line)
+            self._partial = ""
             print(line)
             return UNIT
+        if name.startswith("__"):
+            return self._intrinsic(name, args)
         if name == "throw":
             raise ProvisoThrow(int(args[0]))
         if name == "abs":
@@ -263,6 +276,84 @@ class Interpreter:
         if name in ("borrow", "clone"):
             return args[0]
         raise ProvisoRuntimeError(f"unknown builtin `{name}`")
+
+    # --- intrinsics: the primitive layer under the standard library ------- #
+    def _intrinsic(self, name: str, a: List):
+        if name == "__str_len":
+            return len(a[0])
+        if name == "__str_code":
+            s, i = a
+            if not 0 <= i < len(s):
+                raise ProvisoRuntimeError(
+                    f"string index {i} out of range (length {len(s)})")
+            return ord(s[i])
+        if name == "__str_sub":
+            s, i, j = a
+            i, j = max(0, min(i, len(s))), max(0, min(j, len(s)))
+            return s[i:j] if i < j else ""
+        if name == "__str_chr":
+            return chr(a[0])
+        if name == "__arr_make":
+            return [a[1]] * a[0]
+        if name == "__arr_set":
+            arr, i, v = a
+            if not 0 <= i < len(arr):
+                raise ProvisoRuntimeError(
+                    f"index {i} out of bounds (array length {len(arr)})")
+            out = list(arr)
+            out[i] = v
+            return out
+        if name == "__arr_slice":
+            arr, i, j = a
+            i, j = max(0, min(i, len(arr))), max(0, min(j, len(arr)))
+            return list(arr[i:j]) if i < j else []
+        if name == "__arr_concat":
+            return list(a[0]) + list(a[1])
+        if name == "__write":
+            text = self._partial + a[0]
+            parts = text.split("\n")
+            self.output.extend(parts[:-1])
+            self._partial = parts[-1]
+            print(a[0], end="", flush=True)
+            return UNIT
+        if name == "__read_line":
+            # keeps the trailing newline, so "" unambiguously means end-of-input
+            # (the `fgets` -> NULL convention); std.io turns that into an Exc.
+            stream = self.stdin if self.stdin is not None else _sys.stdin
+            return stream.readline()
+        if name == "__file_read":
+            try:
+                with open(a[0], "r", encoding="utf-8") as f:
+                    return f.read()
+            except OSError:
+                return ""
+        if name in ("__file_write", "__file_append"):
+            try:
+                with open(a[0], "w" if name == "__file_write" else "a",
+                          encoding="utf-8", newline="") as f:
+                    f.write(a[1])
+                return True
+            except OSError:
+                return False
+        if name == "__file_exists":
+            import os
+            return os.path.isfile(a[0])
+        if name == "__file_remove":
+            import os
+            try:
+                os.remove(a[0])
+                return True
+            except OSError:
+                return False
+        if name == "__exit":
+            raise ProvisoExit(int(a[0]))
+        if name == "__getenv":
+            import os
+            return os.environ.get(a[0], "")
+        if name == "__clock_ms":
+            import time
+            return int(time.monotonic() * 1000)
+        raise ProvisoRuntimeError(f"unknown intrinsic `{name}`")
 
     # --- trampolined CPS evaluation --------------------------------------- #
     # Every recursive step returns a `_Thunk` instead of calling directly, so the

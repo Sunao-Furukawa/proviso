@@ -21,3 +21,6 @@ proviso = "proviso.cli:main"
 
 [tool.setuptools]
 packages = ["proviso"]
+
+[tool.setuptools.package-data]
+proviso = ["std/*.pvo"]

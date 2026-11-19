@@ -58,12 +58,14 @@ class Diagnostic:
     choices: List[Choice] = field(default_factory=list)
     source_line: Optional[str] = None  # the offending line of source, if known
     note: Optional[str] = None
+    file: Optional[str] = None  # set when the obligation lives in an imported module
 
     def render(self) -> str:
         S = style
         out: List[str] = []
         out.append(S.red(S.bold(f"conflict[{self.code}]")) + S.bold(f": {self.title}"))
-        out.append(S.dim(f"  at line {self.line}"))
+        where = f"{self.file}:{self.line}" if self.file else f"line {self.line}"
+        out.append(S.dim(f"  at {where}"))
         if self.source_line is not None:
             out.append(S.dim("   |"))
             out.append(S.dim("   | ") + self.source_line.strip())
@@ -97,10 +99,20 @@ class Warning:
     code: str
     line: int
     message: str
+    file: Optional[str] = None
 
     def render(self) -> str:
         S = style
+        where = f"{self.file}:{self.line}" if self.file else f"line {self.line}"
         return (
             S.yellow(S.bold(f"gradual[{self.code}]"))
-            + f" line {self.line}: {self.message}"
+            + f" {where}: {self.message}"
         )
+
+
+def source_lines(source):
+    """Line table for a checker pass. `source` is normally the program text; for a
+    linked multi-file program it is a loader.SourceMap, whose line view spans every
+    imported file's line range."""
+    view = getattr(source, "lines_view", None)
+    return view() if view is not None else source.splitlines()

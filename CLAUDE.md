@@ -39,10 +39,14 @@ proviso/        the implementation (Python, no deps)
   diagnostics.py                    the dialogue renderer
   interp.py                         tree-walking interpreter; refinements double as runtime contracts
   lsp.py                            stdio Language Server: diagnostics + hover + go-to-def (#10)
-  cli.py __main__.py                `proviso check|run|lsp`
+  loader.py                         `import` resolution + linking into one Module (SourceMap)
+  stddoc.py                         `proviso doc [std.x]`
+  std/*.pvo                         the standard library, written in Proviso (see below)
+  cli.py __main__.py                `proviso check|run|doc|lsp`
 examples/   one .pvo per axis, incl. the showcase conflict and the gradual seam
 samples/    runnable programs (factorial, gcd, exceptions, relu, retry_budget, resource)
-tests/run_tests.py   157 dependency-free tests
+tests/run_tests.py   dependency-free tests (+ tests/std_tests.py, exec'd by it)
+tools/check_std.py   checks every std module as its own program
 ```
 
 ## How to run (from this folder)
@@ -51,7 +55,9 @@ tests/run_tests.py   157 dependency-free tests
 python -m proviso run   samples\factorial.pvo      # type-checks, then runs
 python -m proviso check examples\03_conflict.pvo   # see the dialogue-style diagnostic
 python -m proviso lsp                               # language server over stdio (#10)
-python tests\run_tests.py                           # 120 tests
+python -m proviso doc   std.string                  # browse the standard library
+python tests\run_tests.py                           # whole suite
+python tools\check_std.py -v                        # std modules: errors / gradual points
 ```
 
 `run` type-checks first and refuses to run on hard errors; gradual points (`?`) are deferred
@@ -112,6 +118,33 @@ to runtime checks instead. Source files use the `.pvo` extension.
   rest to the runtime) -- the gradual thesis applied to first-class continuations. A
   genuinely unbound name is still a hard error. See `samples/continuations.pvo`,
   `examples/13_continuations.pvo`.
+
+## Standard library + imports [DONE]
+
+`import std.math;` / `import std;` (= std.prelude, everything) / `import "rel.pvo";`
+(`import` keyword, `N.ImportDecl`, `Module.imports`). `loader.load(src, path)` parses the
+main file, DFS-resolves imports (deduped by abs path, cycle-safe), parses each imported
+file with `tokenize(first_line=k*LINE_STRIDE+1)` so every file owns a line range, and
+`link()`s all decls into one flat `Module` (C-like single namespace; a duplicate name is a
+`LoadError` naming both sites). `SourceMap` maps global lines -> (file, local line);
+`diagnostics.source_lines(source)` lets checker/ownership/typestate take a SourceMap.
+`cli._analyze(src, path)` sets `Diagnostic.file` for errors inside imports and drops
+gradual warnings that live in imported code. LSP: `compute_diagnostics(text, path)`
+(import errors at the root import line), `definition_location` jumps into std files.
+
+Layers: **intrinsics** (`checker.intrinsic_signatures`, `interp._intrinsic`, all `__`-prefixed:
+`__str_len/__str_code/__str_sub/__str_chr`, `__arr_make/__arr_set/__arr_slice/__arr_concat`,
+`__write/__read_line` (keeps "\n"; "" = EOF), `__file_read/write/append/exists/remove` (FS),
+`__exit` (Exit -> `interp.ProvisoExit`, cli returns its code), `__getenv` (Env),
+`__clock_ms` (Clock)) -> **std/*.pvo written in Proviso**: math, ctype, string (StrList),
+array, list (IntList), option (Option/Result), errno, io, file (typestate `Writer`,
+protocol `WriterState { WOpen, WClosed }`), stdlib, time, prelude. Naming: public names are
+module-prefixed (`str_`, `arr_`, `list_`, `opt_`/`res_`) except libc-familiar ones
+(`min`, `puts`, `exit`...); private helpers are `_<module>_name` (hidden by `proviso doc`);
+`##` lines are doc comments. Failures throw glibc errno codes via `Exc`. Interp has
+`stdin` (substitutable) and `_partial` (text from `__write` awaiting a newline).
+Every std module must check with 0 errors (`tools/check_std.py`, also in the tests).
+Note: 13 dependent-refinement tests fail when `z3-solver` is not installed (pre-existing).
 
 ## Bounded scope (deliberate, documented in README.md)
 
@@ -227,6 +260,6 @@ Roadmap (all DONE): #5b len-guard -> #4 array-length -> #3 more measures (abs/mi
 #8 erasure+blame -> #2 precise function-arg subtyping -> #9 typestate -> #10 LSP ->
 #1 nested cross-handler effects + escaping continuations -> nested-pattern exhaustiveness ->
 typestate runtime enforcement -> LSP incremental sync + go-to-definition -> precise
-(non-gradual) escaped-continuation types. Remaining ideas: redundant/unreachable-arm
-detection; typestate runtime enforcement for branch-divergent merges; LSP find-references
+(non-gradual) escaped-continuation types. Remaining ideas: generics (so std containers aren't Int-only); module
+namespaces; redundant/unreachable-arm detection; typestate runtime enforcement for branch-divergent merges; LSP find-references
 and rename; precise types for continuations that escape through a non-function join.

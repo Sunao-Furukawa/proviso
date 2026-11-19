@@ -1,0 +1,308 @@
+# std.array -- Int arrays: memset, memcpy, qsort, bsearch, ... as persistent values.
+#
+# (The memory/array half of <string.h> and <stdlib.h>.)
+#
+# Arrays are values: `arr_set` / `arr_push` return a *new* array and never mutate.
+# Higher-order functions are effect-polymorphic: `arr_map(a, f)` performs exactly
+# the effects of `f` (the effect variable `e`), so mapping a pure function is pure.
+
+# --- construction ------------------------------------------------------------ #
+
+## An array of `n` copies of `v` (memset).
+fn arr_make(n: Int{k | k >= 0}, v: Int) -> Array {
+  __arr_make(n, v)
+}
+
+## The integers lo, lo+1, ..., hi-1 (empty when hi <= lo).
+fn arr_range(lo: Int, hi: Int) -> Array {
+  if hi <= lo { [] } else { __arr_concat([lo], arr_range(lo + 1, hi)) }
+}
+
+## A copy of `a` with index `i` set to `v`; out-of-range `i` returns `a` unchanged.
+fn arr_set(a: Array, i: Int, v: Int) -> Array {
+  if i >= 0 && i < len(a) { __arr_set(a, i, v) } else { a }
+}
+
+## `a` with `v` appended.
+fn arr_push(a: Array, v: Int) -> Array {
+  __arr_concat(a, [v])
+}
+
+## `a` followed by `b` (memcpy into a fresh buffer).
+fn arr_concat(a: Array, b: Array) -> Array {
+  __arr_concat(a, b)
+}
+
+## Elements [i, j) of `a`; bounds are clamped.
+fn arr_slice(a: Array, i: Int, j: Int) -> Array {
+  __arr_slice(a, i, j)
+}
+
+# --- access ------------------------------------------------------------------ #
+
+## a[i], or `default` when `i` is out of range (a total, never-failing index).
+fn arr_get_or(a: Array, i: Int, default: Int) -> Int {
+  if i >= 0 && i < len(a) { a[i] } else { default }
+}
+
+## The first element, or `default` for an empty array.
+fn arr_first_or(a: Array, default: Int) -> Int {
+  arr_get_or(a, 0, default)
+}
+
+## The last element, or `default` for an empty array.
+fn arr_last_or(a: Array, default: Int) -> Int {
+  arr_get_or(a, len(a) - 1, default)
+}
+
+## True when `a` has no elements.
+fn arr_is_empty(a: Array) -> Bool {
+  len(a) == 0
+}
+
+# --- reductions -------------------------------------------------------------- #
+
+## The sum of the elements (0 for an empty array).
+fn arr_sum(a: Array) -> Int {
+  _arr_sum(a, 0, 0)
+}
+
+fn _arr_sum(a: Array, i: Int, acc: Int) -> Int {
+  if i >= 0 && i < len(a) { _arr_sum(a, i + 1, acc + a[i]) } else { acc }
+}
+
+## The product of the elements (1 for an empty array).
+fn arr_product(a: Array) -> Int {
+  _arr_prod(a, 0, 1)
+}
+
+fn _arr_prod(a: Array, i: Int, acc: Int) -> Int {
+  if i >= 0 && i < len(a) { _arr_prod(a, i + 1, acc * a[i]) } else { acc }
+}
+
+## The largest element, or `default` for an empty array.
+fn arr_max_or(a: Array, default: Int) -> Int {
+  if len(a) == 0 { default } else { _arr_max(a, 1, a[0]) }
+}
+
+fn _arr_max(a: Array, i: Int, best: Int) -> Int {
+  if i >= 0 && i < len(a) {
+    _arr_max(a, i + 1, if a[i] > best { a[i] } else { best })
+  } else {
+    best
+  }
+}
+
+## The smallest element, or `default` for an empty array.
+fn arr_min_or(a: Array, default: Int) -> Int {
+  if len(a) == 0 { default } else { _arr_min(a, 1, a[0]) }
+}
+
+fn _arr_min(a: Array, i: Int, best: Int) -> Int {
+  if i >= 0 && i < len(a) {
+    _arr_min(a, i + 1, if a[i] < best { a[i] } else { best })
+  } else {
+    best
+  }
+}
+
+# --- searching ---------------------------------------------------------------- #
+
+## The index of the first element equal to `x`, or -1 (a linear lfind).
+fn arr_index_of(a: Array, x: Int) -> Int {
+  _arr_index(a, x, 0)
+}
+
+fn _arr_index(a: Array, x: Int, i: Int) -> Int {
+  if i >= 0 && i < len(a) {
+    if a[i] == x { i } else { _arr_index(a, x, i + 1) }
+  } else {
+    0 - 1
+  }
+}
+
+## True when some element equals `x`.
+fn arr_contains(a: Array, x: Int) -> Bool {
+  arr_index_of(a, x) >= 0
+}
+
+## How many elements equal `x`.
+fn arr_count(a: Array, x: Int) -> Int {
+  _arr_count(a, x, 0)
+}
+
+fn _arr_count(a: Array, x: Int, i: Int) -> Int {
+  if i >= 0 && i < len(a) {
+    (if a[i] == x { 1 } else { 0 }) + _arr_count(a, x, i + 1)
+  } else {
+    0
+  }
+}
+
+## Binary search in an ascending array: the index of `x`, or -1 (bsearch).
+fn arr_bsearch(a: Array, x: Int) -> Int {
+  _arr_bs(a, x, 0, len(a))
+}
+
+fn _arr_bs(a: Array, x: Int, lo: Int, hi: Int) -> Int {
+  if lo >= hi {
+    0 - 1
+  } else {
+    let mid = (lo + hi) / 2;
+    let v = arr_get_or(a, mid, 0);
+    if v == x { mid } else { if v < x { _arr_bs(a, x, mid + 1, hi) } else { _arr_bs(a, x, lo, mid) } }
+  }
+}
+
+# --- transformation ------------------------------------------------------------ #
+
+## The elements in reverse order.
+fn arr_reverse(a: Array) -> Array {
+  _arr_rev(a, len(a) - 1)
+}
+
+fn _arr_rev(a: Array, i: Int) -> Array {
+  if i >= 0 && i < len(a) { __arr_concat([a[i]], _arr_rev(a, i - 1)) } else { [] }
+}
+
+## `f` applied to every element.
+fn arr_map(a: Array, f: Fn(Int) -> Int ! e) -> Array ! e {
+  _arr_amap(a, f, 0)
+}
+
+fn _arr_amap(a: Array, f: Fn(Int) -> Int ! e, i: Int) -> Array ! e {
+  if i >= 0 && i < len(a) {
+    let y = f(a[i]);
+    __arr_concat([y], _arr_amap(a, f, i + 1))
+  } else {
+    []
+  }
+}
+
+## The elements for which `keep` returns true, in order.
+fn arr_filter(a: Array, keep: Fn(Int) -> Bool ! e) -> Array ! e {
+  _arr_afilter(a, keep, 0)
+}
+
+fn _arr_afilter(a: Array, keep: Fn(Int) -> Bool ! e, i: Int) -> Array ! e {
+  if i >= 0 && i < len(a) {
+    let x = a[i];
+    let rest = _arr_afilter(a, keep, i + 1);
+    if keep(x) { __arr_concat([x], rest) } else { rest }
+  } else {
+    []
+  }
+}
+
+## Left fold: f(...f(f(init, a[0]), a[1])..., a[n-1]).
+fn arr_fold(a: Array, init: Int, f: Fn(Int, Int) -> Int ! e) -> Int ! e {
+  _arr_afold(a, init, f, 0)
+}
+
+fn _arr_afold(a: Array, acc: Int, f: Fn(Int, Int) -> Int ! e, i: Int) -> Int ! e {
+  if i >= 0 && i < len(a) { _arr_afold(a, f(acc, a[i]), f, i + 1) } else { acc }
+}
+
+## True when `p` holds for every element (vacuously true when empty).
+fn arr_all(a: Array, p: Fn(Int) -> Bool ! e) -> Bool ! e {
+  len(arr_filter(a, p)) == len(a)
+}
+
+## True when `p` holds for at least one element.
+fn arr_any(a: Array, p: Fn(Int) -> Bool ! e) -> Bool ! e {
+  len(arr_filter(a, p)) > 0
+}
+
+# --- sorting --------------------------------------------------------------------- #
+
+## `a` sorted ascending (a stable merge sort -- qsort without the void*).
+fn arr_sort(a: Array) -> Array {
+  if len(a) <= 1 {
+    a
+  } else {
+    let mid = len(a) / 2;
+    _arr_merge(arr_sort(__arr_slice(a, 0, mid)), arr_sort(__arr_slice(a, mid, len(a))))
+  }
+}
+
+fn _arr_merge(a: Array, b: Array) -> Array {
+  if len(a) == 0 {
+    b
+  } else {
+    if len(b) == 0 {
+      a
+    } else {
+      let x = arr_get_or(a, 0, 0);
+      let y = arr_get_or(b, 0, 0);
+      if x <= y {
+        __arr_concat([x], _arr_merge(__arr_slice(a, 1, len(a)), b))
+      } else {
+        __arr_concat([y], _arr_merge(a, __arr_slice(b, 1, len(b))))
+      }
+    }
+  }
+}
+
+## `a` sorted by a comparator: `cmp(x, y) < 0` means x goes first (qsort's compar).
+fn arr_sort_by(a: Array, cmp: Fn(Int, Int) -> Int) -> Array {
+  if len(a) <= 1 {
+    a
+  } else {
+    let mid = len(a) / 2;
+    _arr_merge_by(arr_sort_by(__arr_slice(a, 0, mid), cmp),
+               arr_sort_by(__arr_slice(a, mid, len(a)), cmp), cmp)
+  }
+}
+
+fn _arr_merge_by(a: Array, b: Array, cmp: Fn(Int, Int) -> Int) -> Array {
+  if len(a) == 0 {
+    b
+  } else {
+    if len(b) == 0 {
+      a
+    } else {
+      let x = arr_get_or(a, 0, 0);
+      let y = arr_get_or(b, 0, 0);
+      if cmp(x, y) <= 0 {
+        __arr_concat([x], _arr_merge_by(__arr_slice(a, 1, len(a)), b, cmp))
+      } else {
+        __arr_concat([y], _arr_merge_by(a, __arr_slice(b, 1, len(b)), cmp))
+      }
+    }
+  }
+}
+
+## True when the elements are in ascending order.
+fn arr_is_sorted(a: Array) -> Bool {
+  _arr_sorted(a, 1)
+}
+
+fn _arr_sorted(a: Array, i: Int) -> Bool {
+  if i >= 1 && i < len(a) { a[i - 1] <= a[i] && _arr_sorted(a, i + 1) } else { true }
+}
+
+## Element-wise equality (memcmp == 0).
+fn arr_eq(a: Array, b: Array) -> Bool {
+  len(a) == len(b) && _arr_eq(a, b, 0)
+}
+
+fn _arr_eq(a: Array, b: Array, i: Int) -> Bool {
+  if i >= 0 && i < len(a) {
+    arr_get_or(b, i, 0) == a[i] && _arr_eq(a, b, i + 1)
+  } else {
+    true
+  }
+}
+
+## A rendering like "[1, 2, 3]".
+fn arr_to_str(a: Array) -> Str {
+  "[" + _arr_show(a, 0) + "]"
+}
+
+fn _arr_show(a: Array, i: Int) -> Str {
+  if i >= 0 && i < len(a) {
+    to_str(a[i]) + (if i + 1 < len(a) { ", " + _arr_show(a, i + 1) } else { "" })
+  } else {
+    ""
+  }
+}

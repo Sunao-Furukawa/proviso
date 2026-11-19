@@ -1,0 +1,87 @@
+# std.option -- explicit absence and failure as values.
+#
+# C reports "no value" through sentinels (-1, NULL) and failure through errno. Proviso
+# has two better tools: an effect (`Exc`, see std.errno) and these data types, which the
+# exhaustiveness checker forces every caller to handle.
+
+## An Int that may be absent.
+enum Option { None(), Some(Int) }
+
+## An Int result, or an error code (an errno value, see std.errno).
+enum Result { Ok(Int), Err(Int) }
+
+## True for Some(_).
+fn opt_is_some(o: Option) -> Bool {
+  match o { Some(_) => true, None() => false }
+}
+
+## True for None().
+fn opt_is_none(o: Option) -> Bool {
+  !opt_is_some(o)
+}
+
+## The contained value, or `default` for None().
+fn opt_unwrap_or(o: Option, default: Int) -> Int {
+  match o { Some(x) => x, None() => default }
+}
+
+## The contained value; throws `code` (an Exc) for None().
+fn opt_expect(o: Option, code: Int) -> Int ! {Exc} {
+  match o {
+    Some(x) => x,
+    None() => { throw(code); 0 }
+  }
+}
+
+## Some(f(x)) for Some(x); None() stays None().
+fn opt_map(o: Option, f: Fn(Int) -> Int ! e) -> Option ! e {
+  match o { Some(x) => Some(f(x)), None() => None() }
+}
+
+## f(x) for Some(x) (f itself returns an Option); None() stays None().
+fn opt_and_then(o: Option, f: Fn(Int) -> Option ! e) -> Option ! e {
+  match o { Some(x) => f(x), None() => None() }
+}
+
+## `o` if it is Some, otherwise `other`.
+fn opt_or(o: Option, other: Option) -> Option {
+  match o { Some(_) => o, None() => other }
+}
+
+## A rendering like "Some(3)" / "None".
+fn opt_to_str(o: Option) -> Str {
+  match o { Some(x) => "Some(" + to_str(x) + ")", None() => "None" }
+}
+
+## True for Ok(_).
+fn res_is_ok(r: Result) -> Bool {
+  match r { Ok(_) => true, Err(_) => false }
+}
+
+## The Ok value, or `default` for Err(_).
+fn res_unwrap_or(r: Result, default: Int) -> Int {
+  match r { Ok(x) => x, Err(_) => default }
+}
+
+## The error code of Err(c), or 0 for Ok(_).
+fn res_error(r: Result) -> Int {
+  match r { Ok(_) => 0, Err(c) => c }
+}
+
+## The Ok value; re-raises the error code as an Exc for Err(c).
+fn res_unwrap(r: Result) -> Int ! {Exc} {
+  match r {
+    Ok(x) => x,
+    Err(c) => { throw(c); 0 }
+  }
+}
+
+## Some(x) for Ok(x), None() for Err(_).
+fn res_to_opt(r: Result) -> Option {
+  match r { Ok(x) => Some(x), Err(_) => None() }
+}
+
+## Ok(f(x)) for Ok(x); Err(c) passes through.
+fn res_map(r: Result, f: Fn(Int) -> Int ! e) -> Result ! e {
+  match r { Ok(x) => Ok(f(x)), Err(c) => Err(c) }
+}

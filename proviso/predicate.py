@@ -718,3 +718,37 @@ def interval_mul(a: Interval, b: Interval) -> Interval:
         hi = POS_INF if (a.hi == POS_INF or b.hi == POS_INF) else a.hi * b.hi
         return Interval(lo, hi)
     return Interval(NEG_INF, POS_INF)
+
+
+# `/` and `%` follow the interpreter's (Python's) *floor* semantics. Only a divisor
+# that is provably positive (b >= 1) is handled precisely; anything else -- a divisor
+# that may be zero or negative -- falls back to the whole line, which is sound.
+def interval_div(a: Interval, b: Interval) -> Interval:
+    if a.empty or b.empty or b.lo == NEG_INF or b.lo < 1:
+        return Interval(NEG_INF, POS_INF)
+    blo = int(b.lo)
+    bhi = None if b.hi == POS_INF else int(b.hi)
+    # floor(x / y) is increasing in x; in y it falls toward 0 from either side, so the
+    # extremes sit at the corners chosen by the sign of x.
+    if a.lo == NEG_INF:
+        lo = NEG_INF
+    elif a.lo >= 0:
+        lo = 0 if bhi is None else int(a.lo) // bhi
+    else:
+        lo = int(a.lo) // blo
+    if a.hi == POS_INF:
+        hi = POS_INF
+    elif a.hi >= 0:
+        hi = int(a.hi) // blo
+    else:
+        hi = -1 if bhi is None else int(a.hi) // bhi
+    return Interval(lo, hi)
+
+
+def interval_mod(a: Interval, b: Interval) -> Interval:
+    if a.empty or b.empty or b.lo == NEG_INF or b.lo < 1:
+        return Interval(NEG_INF, POS_INF)
+    hi = POS_INF if b.hi == POS_INF else b.hi - 1
+    if a.lo >= 0 and a.hi != POS_INF:  # a non-negative x below the divisor is unchanged
+        hi = min(hi, a.hi)
+    return Interval(0, hi)

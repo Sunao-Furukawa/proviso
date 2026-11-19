@@ -206,3 +206,83 @@ _doc = module_doc("std.io")
 check("doc shows signatures + docs, hides private helpers",  # noqa: F821
       "fn read_file(path: Str) -> Str ! {FS, Exc}" in _doc and "_io_chomp" not in _doc
       and "getline" in _doc, _doc[:300])
+
+# --- interval inference through `/` and `%` ----------------------------------- #
+print("interval inference for / and %:")
+from proviso import predicate as _P  # noqa: E402
+
+
+def _iv(lo, hi):
+    return _P.Interval(_P.NEG_INF if lo is None else lo, _P.POS_INF if hi is None else hi)
+
+
+def _in(iv, v):
+    return iv.lo <= v <= iv.hi
+
+
+# brute-force soundness: every concrete x // y and x % y (Python floor semantics,
+# which the interpreter uses) lies in the inferred interval
+_bad = []
+_spans = [(-9, -3), (-4, 5), (0, 7), (3, 12), (-6, -6), (0, 0)]
+for (alo, ahi) in _spans + [(None, 4), (-3, None), (None, None)]:
+    for (blo, bhi) in [(1, 1), (1, 4), (2, 5), (3, None), (1, None)]:
+        dv = _P.interval_div(_iv(alo, ahi), _iv(blo, bhi))
+        md = _P.interval_mod(_iv(alo, ahi), _iv(blo, bhi))
+        xs = range(alo if alo is not None else -40, (ahi if ahi is not None else 40) + 1)
+        ys = range(blo, (bhi if bhi is not None else 30) + 1)
+        for x in xs:
+            for y in ys:
+                if not _in(dv, x // y) or not _in(md, x % y):
+                    _bad.append(((alo, ahi), (blo, bhi), x, y))
+check("interval_div / interval_mod are sound (brute force)", _bad == [], _bad[:5])  # noqa: F821
+check("a divisor that may be <= 0 gives no information",  # noqa: F821
+      _P.interval_div(_iv(0, 9), _iv(0, 3)).whole and _P.interval_mod(_iv(0, 9), _iv(-2, 3)).whole)
+check("n / 2 with n >= 0 stays >= 0",  # noqa: F821
+      _P.interval_div(_iv(0, None), _iv(2, 2)).lo == 0)
+check("x % 10 lands in [0, 9]", (lambda r: (r.lo, r.hi))(  # noqa: F821
+      _P.interval_mod(_iv(None, None), _iv(10, 10))) == (0, 9))
+
+_halve = ("fn need(n: Int{k | k >= 0}) -> Int { n }\n"
+          "fn f(n: Int{k | k >= 0}) -> Int { need(n / 2) + need(n % 3) }\n")
+check("n / 2 and n % 3 discharge a `>= 0` precondition statically",  # noqa: F821
+      std_analyze(_halve)[1:] == ([], []), std_analyze(_halve)[1:])
+_neg = ("fn need(n: Int{k | k >= 0}) -> Int { n }\n"
+        "fn f(n: Int{k | k >= 0}, d: Int) -> Int { need(n / d) }\n")
+check("division by an unrefined Int stays a gradual point",  # noqa: F821
+      len(std_analyze(_neg)[2]) == 1 and std_analyze(_neg)[1] == [], std_analyze(_neg)[1:])
+_neg2 = ("fn need(n: Int{k | k >= 0}) -> Int { n }\n"
+         "fn f() -> Int { need(0 - 7 / 2) }\n")
+check("a provably negative quotient is still a hard conflict",  # noqa: F821
+      [d.code for d in std_analyze(_neg2)[1]] == ["refine-conflict"],
+      [d.code for d in std_analyze(_neg2)[1]])
+
+# the rewritten helpers still compute the right answers
+import math as _math  # noqa: E402
+_sq = ("import std.math;\nfn go(n: Int{k | k >= 0}, hi: Int) -> Int ! {IO} {\n"
+       "  print(isqrt(n)); if n < hi { go(n + 1, hi) } else { 0 } }\n"
+       "fn main() -> Int ! {IO} { print(fib(0)); print(fib(1)); print(fib(90)); go(0, 300) }\n")
+_r, _o = std_run(_sq)
+check("isqrt(0..300) and fib match Python",  # noqa: F821
+      _o[:3] == ["0", "1", "2880067194370816120"]
+      and _o[3:] == [str(_math.isqrt(n)) for n in range(0, 301)], _o[:6])
+
+if _P.solver_backend() == "z3":
+    _gp = {}
+    for _f in sorted(os.listdir(STD_DIR)):
+        if _f.endswith(".pvo"):
+            _p = os.path.join(STD_DIR, _f)
+            _gp[_f] = len(std_analyze(_text(_p), _p)[2])
+    check("with Z3, every std module is fully proven (0 runtime checks)",  # noqa: F821
+          all(v == 0 for v in _gp.values()), {k: v for k, v in _gp.items() if v})
+    _ix = ("fn f(a: Array, i: Int) -> Int {\n"
+           "  if i >= 1 && i < len(a) { a[i - 1] + a[i] } else { 0 } }\n")
+    check("a[i - 1] under `i >= 1 && i < len(a)` is proven",  # noqa: F821
+          std_analyze(_ix)[1:] == ([], []), std_analyze(_ix)[1:])
+    _ix2 = ("fn f(a: Array, i: Int) -> Int {\n"
+            "  if i >= 0 && i < len(a) { a[i + 1] } else { 0 } }\n")
+    check("a[i + 1] under `i < len(a)` may be in range -> gradual, not an error",  # noqa: F821
+          std_analyze(_ix2)[1] == [] and len(std_analyze(_ix2)[2]) == 1, std_analyze(_ix2)[1:])
+    _ix3 = "fn f(a: Array) -> Int { a[len(a)] }\n"
+    check("a[len(a)] is a hard bounds error",  # noqa: F821
+          [d.code for d in std_analyze(_ix3)[1]] == ["bounds"],
+          [d.code for d in std_analyze(_ix3)[1]])

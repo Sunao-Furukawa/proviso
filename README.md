@@ -183,7 +183,7 @@ module := (import std.NAME; | import "file.pvo"; | fn | type | enum | protocol)*
 
 What is **real** and runs: gradual refinements with runtime contracts; an implication
 solver with counterexamples (**Z3-backed when `z3-solver` is installed**, with a pure-Python
-fallback); interval-based refinement inference through `+ - *`; occurrence typing through
+fallback); interval-based refinement inference through `+ - *` and, for a provably positive divisor, `/ %` (floor semantics: `n / 2` keeps `n >= 0`, `x % k` is in `[0, k-1]`); occurrence typing through
 guards; **type aliases** (`type Nat = Int{n | n >= 0}`); an effect row with subset checking,
 **effect inference for omitted rows**, and a dependent effect parameter; ownership as a
 linear-use analysis; algebraic-style `handle/catch` for exceptions; the full dialogue

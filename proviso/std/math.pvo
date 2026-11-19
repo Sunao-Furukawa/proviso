@@ -76,7 +76,7 @@ fn fib(n: Int{k | k >= 0}) -> Int{f | f >= 0} {
   _math_fib(n, 0, 1)
 }
 
-fn _math_fib(n: Int, a: Int, b: Int) -> Int {
+fn _math_fib(n: Int, a: Int{x | x >= 0}, b: Int{y | y >= 0}) -> Int{f | f >= 0} {
   if n <= 0 { a } else { _math_fib(n - 1, b, a + b) }
 }
 
@@ -85,9 +85,12 @@ fn isqrt(n: Int{k | k >= 0}) -> Int{r | r >= 0} {
   if n < 2 { n } else { _math_isqrt(n, n) }
 }
 
-fn _math_isqrt(n: Int, x: Int) -> Int {
+# Newton step from the overestimate `x` (>= 1). `y` is proven >= 0 by interval
+# inference through `/`; the `y < 1` guard (never taken for n >= 2) makes the
+# recursive call's `x >= 1` provable too.
+fn _math_isqrt(n: Int{k | k >= 0}, x: Int{k | k >= 1}) -> Int{r | r >= 0} {
   let y = (x + n / x) / 2;
-  if y >= x { x } else { _math_isqrt(n, y) }
+  if y < 1 { x } else { if y >= x { x } else { _math_isqrt(n, y) } }
 }
 
 ## True when `n` is prime (trial division up to isqrt(n)).

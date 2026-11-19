@@ -1,0 +1,9 @@
+# Hello World. `puts` comes from the standard library (std.io); `! {IO}` declares
+# that main writes to the console -- remove it and the checker reports an effect leak.
+
+import std.io;
+
+fn main() -> Int ! {IO} {
+  puts("Hello World");
+  0
+}

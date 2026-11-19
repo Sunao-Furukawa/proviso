@@ -41,6 +41,11 @@ for _f in sorted(os.listdir(STD_DIR)):
 check("std module list", "std.string" in std_modules() and "std.io" in std_modules(),  # noqa: F821
       std_modules())
 
+# hello world
+_hp = os.path.join(SAMPLES, "hello.pvo")  # noqa: F821
+check("hello sample prints Hello World", std_run(_text(_hp), _hp) == (0, ["Hello World"]),  # noqa: F821
+      std_run(_text(_hp), _hp))
+
 # the tour sample exercises string/ctype/math/array/list/option/errno/io/stdlib
 _tp = os.path.join(SAMPLES, "stdlib_tour.pvo")  # noqa: F821
 _r, _o = std_run(_text(_tp), _tp)

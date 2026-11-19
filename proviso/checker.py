@@ -607,21 +607,20 @@ class Checker:
                 and isinstance(rt, BaseType) and rt.name == "Str":
             return T.STR, eff
         # arithmetic -- propagate intervals so refinements survive computation
-        if e.op in ("+", "-", "*"):
+        # (`/` and `%` too, for a provably positive divisor: floor semantics, so e.g.
+        # `n / 2` keeps `n >= 0` and `x % k` lands in [0, k-1])
+        _ops = {"+": P.interval_add, "-": P.interval_sub, "*": P.interval_mul,
+                "/": P.interval_div, "%": P.interval_mod}
+        if e.op in _ops:
             ai = self._interval(lt)
             bi = self._interval(rt)
             if ai is not None and bi is not None:
-                if e.op == "+":
-                    res = P.interval_add(ai, bi)
-                elif e.op == "-":
-                    res = P.interval_sub(ai, bi)
-                else:
-                    res = P.interval_mul(ai, bi)
+                res = _ops[e.op](ai, bi)
                 pred = P.pred_of_interval(res)
                 if isinstance(pred, P.PTrue):
                     return T.INT(), eff
                 return T.INT(pred), eff
-        return T.INT(), eff  # / and % stay gradual
+        return T.INT(), eff
 
     def _interval(self, ty: T.Type) -> Optional[P.Interval]:
         if isinstance(ty, BaseType) and ty.name == "Int":
@@ -1074,7 +1073,9 @@ class Checker:
         if not isinstance(e.arr, N.Var):
             self._gradual(e.line, "array index", "0 <= i < len(array)")
             return True
-        idxterm = self._arg_term(e.idx)
+        # the index may be linear arithmetic (`a[i - 1]`): name it as a term so the
+        # guard facts (`i >= 1 && i < len(a)`) can discharge the obligation
+        idxterm = self._arg_term(e.idx) or self._expr_to_term(e.idx)
         if idxterm is None:
             self._gradual(e.line, "array index", "0 <= i < len(array)")
             return True

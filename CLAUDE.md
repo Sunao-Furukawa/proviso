@@ -143,8 +143,14 @@ module-prefixed (`str_`, `arr_`, `list_`, `opt_`/`res_`) except libc-familiar on
 (`min`, `puts`, `exit`...); private helpers are `_<module>_name` (hidden by `proviso doc`);
 `##` lines are doc comments. Failures throw glibc errno codes via `Exc`. Interp has
 `stdin` (substitutable) and `_partial` (text from `__write` awaiting a newline).
-Every std module must check with 0 errors (`tools/check_std.py`, also in the tests).
-Note: 13 dependent-refinement tests fail when `z3-solver` is not installed (pre-existing).
+Every std module must check with 0 errors (`tools/check_std.py`, also in the tests), and
+with Z3 installed every std module is **fully proven: 0 gradual points** (asserted by a
+test). Two checker extensions made that possible: `P.interval_div` / `P.interval_mod`
+(interval inference through `/` and `%` for a provably positive divisor, Python floor
+semantics; any other divisor -> whole line), and array indices that are linear arithmetic
+(`a[i - 1]`) are lowered with `_expr_to_term` so guard facts discharge them.
+Note: 13 dependent-refinement tests fail when `z3-solver` is not installed (pre-existing;
+`PROVISO_SOLVER=sampler` only affects `implies`, dependent discharge still uses Z3).
 
 ## Bounded scope (deliberate, documented in README.md)
 

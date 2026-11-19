@@ -142,7 +142,7 @@ fn str_count(s: Str, needle: Str) -> Int{n | n >= 0} {
   if __str_len(needle) == 0 { 0 } else { _str_count(s, needle, 0) }
 }
 
-fn _str_count(s: Str, needle: Str, from: Int) -> Int {
+fn _str_count(s: Str, needle: Str, from: Int) -> Int{n | n >= 0} {
   let at = str_find_from(s, needle, from);
   if at < 0 { 0 } else { 1 + _str_count(s, needle, at + __str_len(needle)) }
 }

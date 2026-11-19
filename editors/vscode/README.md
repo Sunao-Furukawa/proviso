@@ -8,7 +8,11 @@ A VS Code extension that gives you, for `.pvo` files:
   two choices) the CLI prints, shown inline as you type, with gradual points as warnings;
 - **hover** — the enclosing function's effect-inferred signature;
 - **go-to-definition** — F12 / Ctrl-click jumps from a use of a function, type alias,
-  enum, constructor, or protocol to its declaration;
+  enum, constructor, or protocol to its declaration — including into the standard
+  library (`str_split` opens `proviso/std/string.pvo`);
+- **imports** — `import std.string;` / `import std;` / `import "util.pvo";` are
+  highlighted, resolved by the server, and an unknown module or a name clash with the
+  library is reported on the `import` line (v1.2.0);
 - **incremental sync** — edits are streamed to the server as range-based deltas;
 - **run** — *Proviso: Run Current File* runs the open `.pvo` with `proviso run`.
 
@@ -74,8 +78,8 @@ Press **F5** ("Run Proviso Extension"). A second VS Code window opens — open a
 cd editors/vscode
 npm install                        # REQUIRED before packaging (bundles vscode-languageclient)
 npm install -g @vscode/vsce
-vsce package                       # produces proviso-1.1.0.vsix
-code --install-extension proviso-1.1.0.vsix
+vsce package                       # produces proviso-1.2.0.vsix
+code --install-extension proviso-1.2.0.vsix
 ```
 
 `npm install` **must** run before `vsce package` — otherwise `node_modules` is not
@@ -115,7 +119,7 @@ Example `settings.json`:
   always because the packaged `.vsix` is missing `node_modules` (the
   `vscode-languageclient` dependency). Repackage with `npm install` first:
   `cd editors/vscode && npm install && vsce package`, then reinstall
-  (`code --install-extension proviso-1.1.0.vsix --force`) and reload the window. From
+  (`code --install-extension proviso-1.2.0.vsix --force`) and reload the window. From
   v1.0.2 the run command and highlighting keep working even if the language server can't
   load (you'll get a warning instead of a dead extension).
 - **No diagnostics appear.** Open *Output → Proviso* (and *Output → Proviso Language

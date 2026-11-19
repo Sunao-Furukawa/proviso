@@ -42,6 +42,14 @@
             "1": { "name": "keyword.declaration.proviso" },
             "2": { "name": "entity.name.type.proviso" }
           }
+        },
+        {
+          "comment": "import std.string;  /  import std;  (a quoted path is matched by #strings)",
+          "match": "\\b(import)\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)",
+          "captures": {
+            "1": { "name": "keyword.control.import.proviso" },
+            "2": { "name": "entity.name.namespace.proviso" }
+          }
         }
       ]
     },

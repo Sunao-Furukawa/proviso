@@ -7,7 +7,7 @@ from typing import List
 KEYWORDS = {
     "fn", "let", "linear", "if", "else", "true", "false",
     "handle", "catch", "return", "type", "enum", "match",
-    "perform", "with", "protocol",
+    "perform", "with", "protocol", "import",
 }
 
 # Multi-character operators must be tried before single-character ones.
@@ -34,10 +34,12 @@ class LexError(Exception):
         self.col = col
 
 
-def tokenize(src: str) -> List[Token]:
+def tokenize(src: str, first_line: int = 1) -> List[Token]:
+    # `first_line` lets the module loader give each imported file its own line range,
+    # so diagnostics can be mapped back to (file, line) -- see loader.py.
     toks: List[Token] = []
     i = 0
-    line = 1
+    line = first_line
     col = 1
     n = len(src)
 

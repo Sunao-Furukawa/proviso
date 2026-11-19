@@ -1,0 +1,335 @@
+# std.string -- strings (<string.h>, plus the string parts of <stdlib.h>: atoi/strtol).
+#
+# Strings are immutable values; every "modifying" function returns a new string.
+# Indices are 0-based. Out-of-range positions are handled *totally* (an empty string
+# or -1 comes back), the way a careful libc caller would wrap strchr & co -- except
+# where the name promises otherwise (`str_to_int` throws on malformed input).
+#
+# Because arrays hold only Ints, functions that yield several strings use `StrList`.
+
+import std.ctype;
+
+## A list of strings: the result of str_split, the input of str_join.
+enum StrList { SNil(), SCons(Str, StrList) }
+
+# --- length, access, slicing ------------------------------------------------ #
+
+## The number of characters in `s` (strlen).
+fn str_len(s: Str) -> Int{n | n >= 0} {
+  __str_len(s)
+}
+
+## True when `s` has no characters.
+fn str_is_empty(s: Str) -> Bool {
+  __str_len(s) == 0
+}
+
+## The character code at index `i`, or -1 when `i` is out of range.
+fn str_code_at(s: Str, i: Int) -> Int {
+  if i >= 0 && i < __str_len(s) { __str_code(s, i) } else { 0 - 1 }
+}
+
+## The one-character string at index `i`, or "" when `i` is out of range.
+fn str_at(s: Str, i: Int) -> Str {
+  __str_sub(s, i, i + 1)
+}
+
+## Characters [i, j) of `s`; bounds are clamped into the string.
+fn str_slice(s: Str, i: Int, j: Int) -> Str {
+  __str_sub(s, i, j)
+}
+
+## `count` characters of `s` starting at `start` (like a bounded strncpy).
+fn str_sub(s: Str, start: Int, count: Int{c | c >= 0}) -> Str {
+  __str_sub(s, start, start + count)
+}
+
+## Everything from index `i` to the end.
+fn str_drop(s: Str, i: Int) -> Str {
+  __str_sub(s, i, __str_len(s))
+}
+
+## The first `n` characters.
+fn str_take(s: Str, n: Int) -> Str {
+  __str_sub(s, 0, n)
+}
+
+# --- comparison ------------------------------------------------------------- #
+
+## String equality.
+fn str_eq(a: Str, b: Str) -> Bool {
+  a == b
+}
+
+## Lexicographic comparison by code point (strcmp): -1, 0 or 1.
+fn str_cmp(a: Str, b: Str) -> Int{c | c >= 0 - 1 && c <= 1} {
+  if a == b { 0 } else { if a < b { 0 - 1 } else { 1 } }
+}
+
+## Case-insensitive (ASCII) equality (strcasecmp == 0).
+fn str_eq_nocase(a: Str, b: Str) -> Bool {
+  str_to_lower(a) == str_to_lower(b)
+}
+
+## True when `s` begins with `prefix`.
+fn str_starts_with(s: Str, prefix: Str) -> Bool {
+  __str_sub(s, 0, __str_len(prefix)) == prefix
+}
+
+## True when `s` ends with `suffix`.
+fn str_ends_with(s: Str, suffix: Str) -> Bool {
+  let n = __str_len(s);
+  let m = __str_len(suffix);
+  m <= n && __str_sub(s, n - m, n) == suffix
+}
+
+# --- searching -------------------------------------------------------------- #
+
+## Index of the first occurrence of `needle` at or after `from`, or -1 (strstr).
+fn str_find_from(s: Str, needle: Str, from: Int) -> Int {
+  let n = __str_len(s);
+  let m = __str_len(needle);
+  let start = if from < 0 { 0 } else { from };
+  _str_find(s, needle, start, n - m)
+}
+
+fn _str_find(s: Str, needle: Str, i: Int, last: Int) -> Int {
+  if i > last {
+    0 - 1
+  } else {
+    if __str_sub(s, i, i + __str_len(needle)) == needle { i } else { _str_find(s, needle, i + 1, last) }
+  }
+}
+
+## Index of the first occurrence of `needle`, or -1.
+fn str_find(s: Str, needle: Str) -> Int {
+  str_find_from(s, needle, 0)
+}
+
+## Index of the last occurrence of `needle`, or -1 (like strrstr).
+fn str_rfind(s: Str, needle: Str) -> Int {
+  _str_rfind(s, needle, __str_len(s) - __str_len(needle))
+}
+
+fn _str_rfind(s: Str, needle: Str, i: Int) -> Int {
+  if i < 0 {
+    0 - 1
+  } else {
+    if __str_sub(s, i, i + __str_len(needle)) == needle { i } else { _str_rfind(s, needle, i - 1) }
+  }
+}
+
+## True when `needle` occurs in `s`.
+fn str_contains(s: Str, needle: Str) -> Bool {
+  str_find(s, needle) >= 0
+}
+
+## Index of the first character whose code is `c`, or -1 (strchr).
+fn str_index_of_code(s: Str, c: Int) -> Int {
+  _str_chr(s, c, 0)
+}
+
+fn _str_chr(s: Str, c: Int, i: Int) -> Int {
+  if i >= __str_len(s) {
+    0 - 1
+  } else {
+    if __str_code(s, i) == c { i } else { _str_chr(s, c, i + 1) }
+  }
+}
+
+## The number of non-overlapping occurrences of a non-empty `needle`.
+fn str_count(s: Str, needle: Str) -> Int{n | n >= 0} {
+  if __str_len(needle) == 0 { 0 } else { _str_count(s, needle, 0) }
+}
+
+fn _str_count(s: Str, needle: Str, from: Int) -> Int {
+  let at = str_find_from(s, needle, from);
+  if at < 0 { 0 } else { 1 + _str_count(s, needle, at + __str_len(needle)) }
+}
+
+# --- building --------------------------------------------------------------- #
+
+## `s` repeated `n` times.
+fn str_repeat(s: Str, n: Int{k | k >= 0}) -> Str {
+  _str_repeat(s, n)
+}
+
+fn _str_repeat(s: Str, n: Int) -> Str {
+  if n <= 0 { "" } else { s + _str_repeat(s, n - 1) }
+}
+
+## Every occurrence of a non-empty `old` replaced by `new`.
+fn str_replace(s: Str, old: Str, new: Str) -> Str {
+  if __str_len(old) == 0 { s } else { _str_replace(s, old, new) }
+}
+
+fn _str_replace(s: Str, old: Str, new: Str) -> Str {
+  let at = str_find(s, old);
+  if at < 0 {
+    s
+  } else {
+    __str_sub(s, 0, at) + new + _str_replace(str_drop(s, at + __str_len(old)), old, new)
+  }
+}
+
+## The characters of `s` in reverse order.
+fn str_reverse(s: Str) -> Str {
+  _str_rev(s, __str_len(s) - 1)
+}
+
+fn _str_rev(s: Str, i: Int) -> Str {
+  if i < 0 { "" } else { __str_sub(s, i, i + 1) + _str_rev(s, i - 1) }
+}
+
+## `s` with every character code passed through `f`.
+fn str_map(s: Str, f: Fn(Int) -> Int) -> Str {
+  _str_map(s, f, 0)
+}
+
+fn _str_map(s: Str, f: Fn(Int) -> Int, i: Int) -> Str {
+  if i >= __str_len(s) {
+    ""
+  } else {
+    let c = f(__str_code(s, i));
+    let ch = if c >= 0 { __str_chr(c) } else { "" };
+    ch + _str_map(s, f, i + 1)
+  }
+}
+
+## ASCII upper-case.
+fn str_to_upper(s: Str) -> Str {
+  str_map(s, to_upper)
+}
+
+## ASCII lower-case.
+fn str_to_lower(s: Str) -> Str {
+  str_map(s, to_lower)
+}
+
+## `s` without leading whitespace.
+fn str_trim_left(s: Str) -> Str {
+  str_drop(s, _str_skip_space(s, 0))
+}
+
+fn _str_skip_space(s: Str, i: Int) -> Int {
+  if i < __str_len(s) && is_space(__str_code(s, i)) { _str_skip_space(s, i + 1) } else { i }
+}
+
+## `s` without trailing whitespace.
+fn str_trim_right(s: Str) -> Str {
+  __str_sub(s, 0, _str_rskip_space(s, __str_len(s)))
+}
+
+fn _str_rskip_space(s: Str, j: Int) -> Int {
+  if j > 0 && is_space(__str_code(s, j - 1)) { _str_rskip_space(s, j - 1) } else { j }
+}
+
+## `s` without leading or trailing whitespace.
+fn str_trim(s: Str) -> Str {
+  str_trim_left(str_trim_right(s))
+}
+
+## `s` padded on the left with `pad` (one character) up to `width` characters.
+fn str_pad_left(s: Str, width: Int, pad: Str) -> Str {
+  let need = width - __str_len(s);
+  if need <= 0 { s } else { _str_repeat(pad, need) + s }
+}
+
+## `s` padded on the right with `pad` (one character) up to `width` characters.
+fn str_pad_right(s: Str, width: Int, pad: Str) -> Str {
+  let need = width - __str_len(s);
+  if need <= 0 { s } else { s + _str_repeat(pad, need) }
+}
+
+# --- splitting and joining (StrList) ---------------------------------------- #
+
+## The pieces of `s` between occurrences of `sep` (strtok without the state).
+## An empty `sep` splits into single characters.
+fn str_split(s: Str, sep: Str) -> StrList {
+  if __str_len(sep) == 0 { _str_chars(s, 0) } else { _str_split(s, sep) }
+}
+
+fn _str_chars(s: Str, i: Int) -> StrList {
+  if i >= __str_len(s) { SNil() } else { SCons(__str_sub(s, i, i + 1), _str_chars(s, i + 1)) }
+}
+
+fn _str_split(s: Str, sep: Str) -> StrList {
+  let at = str_find(s, sep);
+  if at < 0 {
+    SCons(s, SNil())
+  } else {
+    SCons(__str_sub(s, 0, at), _str_split(str_drop(s, at + __str_len(sep)), sep))
+  }
+}
+
+## The lines of `s` (split on "\n").
+fn str_lines(s: Str) -> StrList {
+  str_split(s, "\n")
+}
+
+## The pieces of `parts` glued together with `sep` between them.
+fn str_join(parts: StrList, sep: Str) -> Str {
+  match parts {
+    SNil() => "",
+    SCons(x, SNil()) => x,
+    SCons(x, rest) => x + sep + str_join(rest, sep)
+  }
+}
+
+## The number of strings in a StrList.
+fn strlist_len(xs: StrList) -> Int{n | n >= 0} {
+  match xs {
+    SNil() => 0,
+    SCons(_, rest) => 1 + strlist_len(rest)
+  }
+}
+
+## The `i`-th string of a StrList, or "" when out of range.
+fn strlist_nth(xs: StrList, i: Int) -> Str {
+  match xs {
+    SNil() => "",
+    SCons(x, rest) => if i == 0 { x } else { strlist_nth(rest, i - 1) }
+  }
+}
+
+# --- number conversion (atoi / strtol / itoa) -------------------------------- #
+
+## The decimal rendering of `n` (itoa).
+fn str_from_int(n: Int) -> Str {
+  to_str(n)
+}
+
+## True when `s` is an optional sign followed by one or more decimal digits.
+fn str_is_int(s: Str) -> Bool {
+  let start = if str_starts_with(s, "-") || str_starts_with(s, "+") { 1 } else { 0 };
+  __str_len(s) > start && _str_all_digits(s, start)
+}
+
+fn _str_all_digits(s: Str, i: Int) -> Bool {
+  if i >= __str_len(s) { true } else { is_digit(__str_code(s, i)) && _str_all_digits(s, i + 1) }
+}
+
+## Parse a decimal integer (surrounding whitespace allowed). Throws EINVAL (22)
+## on malformed input, so the caller sees `Exc` in its effect row (strtol + errno).
+fn str_to_int(s: Str) -> Int ! {Exc} {
+  let t = str_trim(s);
+  if !str_is_int(t) {
+    throw(22);
+    0
+  } else {
+    if str_starts_with(t, "-") {
+      0 - _str_digits_value(t, 1, 0)
+    } else {
+      _str_digits_value(t, if str_starts_with(t, "+") { 1 } else { 0 }, 0)
+    }
+  }
+}
+
+fn _str_digits_value(s: Str, i: Int, acc: Int) -> Int {
+  if i >= __str_len(s) { acc } else { _str_digits_value(s, i + 1, acc * 10 + (__str_code(s, i) - 48)) }
+}
+
+## Parse a decimal integer, or return `default` when `s` is malformed (atoi, made total).
+fn str_to_int_or(s: Str, default: Int) -> Int {
+  handle { str_to_int(s) } catch (e) { default }
+}

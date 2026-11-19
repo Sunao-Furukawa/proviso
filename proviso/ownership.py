@@ -14,13 +14,13 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 
 from . import nodes as N
-from .diagnostics import Diagnostic, Choice
+from .diagnostics import Diagnostic, Choice, source_lines
 
 
 class OwnershipChecker:
     def __init__(self, module: N.Module, source: str):
         self.module = module
-        self.src_lines = source.splitlines()
+        self.src_lines = source_lines(source)
         self.diags: List[Diagnostic] = []
 
     def src_line(self, line: int) -> Optional[str]:

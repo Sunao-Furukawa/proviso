@@ -1,0 +1,80 @@
+# std.ctype -- character classification (<ctype.h>).
+#
+# As in C, a "character" is its integer code (a Unicode code point); `ord` / `chr`
+# convert between a one-character Str and its code. The classifiers are ASCII-based,
+# matching glibc's "C" locale.
+
+## The code point of the first character of `s` (-1 if `s` is empty).
+fn ord(s: Str) -> Int {
+  if __str_len(s) == 0 { 0 - 1 } else { __str_code(s, 0) }
+}
+
+## The one-character string for code point `c` (c >= 0).
+fn chr(c: Int{k | k >= 0}) -> Str {
+  __str_chr(c)
+}
+
+## '0'..'9'
+fn is_digit(c: Int) -> Bool {
+  c >= 48 && c <= 57
+}
+
+## 'A'..'Z'
+fn is_upper(c: Int) -> Bool {
+  c >= 65 && c <= 90
+}
+
+## 'a'..'z'
+fn is_lower(c: Int) -> Bool {
+  c >= 97 && c <= 122
+}
+
+## A letter: is_upper || is_lower.
+fn is_alpha(c: Int) -> Bool {
+  is_upper(c) || is_lower(c)
+}
+
+## A letter or a digit.
+fn is_alnum(c: Int) -> Bool {
+  is_alpha(c) || is_digit(c)
+}
+
+## Space, \t, \n, \v, \f or \r.
+fn is_space(c: Int) -> Bool {
+  c == 32 || (c >= 9 && c <= 13)
+}
+
+## '0'..'9', 'a'..'f', 'A'..'F'
+fn is_xdigit(c: Int) -> Bool {
+  is_digit(c) || (c >= 97 && c <= 102) || (c >= 65 && c <= 70)
+}
+
+## Printable ASCII punctuation (graphic, but not a letter or digit).
+fn is_punct(c: Int) -> Bool {
+  c >= 33 && c <= 126 && !is_alnum(c)
+}
+
+## Printable ASCII, including space.
+fn is_print(c: Int) -> Bool {
+  c >= 32 && c <= 126
+}
+
+## ASCII control characters (0..31 and 127).
+fn is_cntrl(c: Int) -> Bool {
+  (c >= 0 && c <= 31) || c == 127
+}
+
+## The upper-case form of a lower-case ASCII letter; anything else unchanged.
+fn to_upper(c: Int) -> Int {
+  if is_lower(c) { c - 32 } else { c }
+}
+
+## The lower-case form of an upper-case ASCII letter; anything else unchanged.
+fn to_lower(c: Int) -> Int {
+  if is_upper(c) { c + 32 } else { c }
+}
+
+## The value of a decimal digit character ('7' -> 7), or -1 if it is not one.
+fn digit_value(c: Int) -> Int {
+  if is_digit(c) { c - 48 } else { 0 - 1 }
+}

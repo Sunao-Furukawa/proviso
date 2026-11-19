@@ -1,0 +1,140 @@
+# std.io -- console and whole-file I/O (<stdio.h>).
+#
+# The effect row tells the truth about every function: console traffic is `IO`, the
+# filesystem is `FS`, and anything that can fail also carries `Exc` (the error code
+# is an errno value -- see std.errno). Writers that need open/close discipline live
+# in std.file, where typestate enforces it.
+
+import std.string;
+
+# --- console output -------------------------------------------------------------- #
+
+## Write `s` followed by a newline (puts).
+fn puts(s: Str) -> Unit ! {IO} {
+  print(s)
+}
+
+## Write `s` with no newline (fputs to stdout).
+fn put(s: Str) -> Unit ! {IO} {
+  __write(s)
+}
+
+## Write an Int followed by a newline.
+fn print_int(n: Int) -> Unit ! {IO} {
+  print(n)
+}
+
+## Write an empty line.
+fn newline() -> Unit ! {IO} {
+  print("")
+}
+
+## `template` with each "{}" replaced, in order, by the next element of `args`
+## (a tiny, type-safe sprintf: there is no format string to get wrong).
+## Surplus "{}" render as "{}"; surplus arguments are ignored.
+fn format(template: Str, args: Array) -> Str {
+  _io_format(template, args, 0)
+}
+
+fn _io_format(t: Str, args: Array, k: Int) -> Str {
+  let at = str_find(t, "{}");
+  if at < 0 {
+    t
+  } else {
+    let piece = if k >= 0 && k < len(args) { to_str(args[k]) } else { "{}" };
+    str_slice(t, 0, at) + piece + _io_format(str_drop(t, at + 2), args, k + 1)
+  }
+}
+
+## `template` with each "{}" replaced by the next string of `args`.
+fn format_strs(template: Str, args: StrList) -> Str {
+  let at = str_find(template, "{}");
+  if at < 0 {
+    template
+  } else {
+    match args {
+      SNil() => template,
+      SCons(x, rest) => str_slice(template, 0, at) + x + format_strs(str_drop(template, at + 2), rest)
+    }
+  }
+}
+
+## format(template, args) written with no trailing newline (printf).
+fn printf(template: Str, args: Array) -> Unit ! {IO} {
+  __write(format(template, args))
+}
+
+## format(template, args) written with a trailing newline.
+fn printfln(template: Str, args: Array) -> Unit ! {IO} {
+  print(format(template, args))
+}
+
+# --- console input ----------------------------------------------------------------- #
+
+## The next line of standard input, without its line terminator (getline).
+## Throws ENODATA (61) at end of input.
+fn read_line() -> Str ! {IO, Exc} {
+  let raw = __read_line();
+  if raw == "" {
+    throw(61);
+    ""
+  } else {
+    _io_chomp(raw)
+  }
+}
+
+fn _io_chomp(s: Str) -> Str {
+  let t = if str_ends_with(s, "\n") { str_slice(s, 0, str_len(s) - 1) } else { s };
+  if str_ends_with(t, "\r") { str_slice(t, 0, str_len(t) - 1) } else { t }
+}
+
+## The next line of standard input, or `default` at end of input.
+fn read_line_or(default: Str) -> Str ! {IO} {
+  let raw = __read_line();
+  if raw == "" { default } else { _io_chomp(raw) }
+}
+
+## Read a line and parse it as an Int (scanf("%d")). Throws ENODATA at end of input
+## and EINVAL when the line is not an integer.
+fn read_int() -> Int ! {IO, Exc} {
+  str_to_int(read_line())
+}
+
+# --- whole files ---------------------------------------------------------------------- #
+
+## True when `path` names an existing regular file.
+fn file_exists(path: Str) -> Bool ! {FS} {
+  __file_exists(path)
+}
+
+## The entire contents of the file at `path`. Throws ENOENT (2) if it does not exist.
+fn read_file(path: Str) -> Str ! {FS, Exc} {
+  if __file_exists(path) {
+    __file_read(path)
+  } else {
+    throw(2);
+    ""
+  }
+}
+
+## The lines of the file at `path`. Throws ENOENT (2) if it does not exist.
+fn read_lines(path: Str) -> StrList ! {FS, Exc} {
+  let text = read_file(path);
+  let body = if str_ends_with(text, "\n") { str_slice(text, 0, str_len(text) - 1) } else { text };
+  if body == "" { SNil() } else { str_lines(body) }
+}
+
+## Replace the file at `path` with `data`. Throws EIO (5) on failure.
+fn write_file(path: Str, data: Str) -> Unit ! {FS, Exc} {
+  if !__file_write(path, data) { throw(5) }
+}
+
+## Append `data` to the file at `path` (creating it). Throws EIO (5) on failure.
+fn append_file(path: Str, data: Str) -> Unit ! {FS, Exc} {
+  if !__file_append(path, data) { throw(5) }
+}
+
+## Delete the file at `path`. Throws ENOENT (2) if there was nothing to delete.
+fn remove_file(path: Str) -> Unit ! {FS, Exc} {
+  if !__file_remove(path) { throw(2) }
+}

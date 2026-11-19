@@ -624,6 +624,50 @@ conflict[refine-conflict]: argument `x` of `sqrt_floor` cannot be proven
 
 `print` は意図的に多相で、任意の基本型(`Int`・`Bool`・`Str` など)を受理します。
 
+### 標準ライブラリ(`std`)
+
+C における glibc に相当する標準ライブラリが `proviso/std/` にあり、**Proviso 自身で**
+書かれています。土台は `__` で始まる少数の *intrinsic*(glibc が包むシステムコールに相当:
+`__str_sub`・`__arr_concat`・`__write`・`__file_read`・`__exit` など)で、利用者は
+リファインメント付きの公開関数だけを呼びます。
+
+```proviso
+import std.string;     # 1 モジュールだけ
+import std;            # 全部(= std.prelude)
+import "util.pvo";     # 自分のファイル(このファイルからの相対パス)
+```
+
+| モジュール | C での対応 | 主な関数 |
+|-----------|-----------|---------|
+| `std.math` | `<math.h>`・`<stdlib.h>` | `min max clamp pow pow_mod gcd lcm isqrt factorial fib is_prime div_trunc` |
+| `std.ctype` | `<ctype.h>` | `is_digit is_alpha is_space to_upper to_lower ord chr` |
+| `std.string` | `<string.h>`・`atoi`/`strtol` | `str_find str_replace str_split str_join str_trim str_to_int` |
+| `std.array` | `memset`/`qsort`/`bsearch` | `arr_sort arr_sort_by arr_bsearch arr_map arr_filter arr_fold` |
+| `std.list` | — | `IntList`、`list_map list_filter list_reverse list_nth` |
+| `std.option` | 番兵値 / `NULL` | `Option`・`Result`、`opt_unwrap_or res_unwrap` |
+| `std.errno` | `<errno.h>`・`strerror` | `ENOENT() EINVAL() … strerror` |
+| `std.io` | `<stdio.h>` | `puts printf format read_line read_int read_file write_file` |
+| `std.file` | `FILE*` | `fopen_write fwrite fclose`(開閉の順序をタイプステートで強制) |
+| `std.stdlib` | `<stdlib.h>`・`<assert.h>` | `exit abort assert getenv atoi rand_next rand_below` |
+| `std.time` | `<time.h>` | `clock_ms elapsed_ms` |
+
+libc との違い(Proviso らしさ):
+
+- **前提条件が型**: `pow` の指数は `Int{e | e >= 0}`、`exit` の終了コードは
+  `Int{c | c >= 0 && c <= 255}`。誤用はライブラリ内部のクラッシュではなく、**呼び出し側**の
+  対話型診断になります(`examples/16_stdlib_contracts.pvo`)。
+- **失敗は errno ではなく効果**: `str_to_int`・`read_file`・`read_line` は効果行に `Exc` を
+  持ち、コードは glibc の errno 値。処理し忘れは `effect-leak`。コンソールは `IO`、
+  ファイルは `FS`、`exit` は `Exit`、時計は `Clock`、環境変数は `Env`。
+- **高階関数は効果多相**: `arr_map(xs, f)` の効果はちょうど `f` の効果。
+- **隠れた状態がない**: `rand_next(seed)` は glibc の LCG を純粋関数にしたもの。
+- **誤用できない `FILE*`**: `fclose` 後の `fwrite` は静的なタイプステートエラー。
+
+C と同じく名前空間は1つ(フラット)で、ライブラリと同名の定義はリンクエラーになり、両方の
+定義位置が示されます。公開名はモジュール接頭辞付き(`str_`・`arr_`・`list_`)、内部ヘルパーは
+`_モジュール_名前`、intrinsic は `__名前` です。ジェネリクスがまだ無いため、配列・リスト・
+`Option` は `Int` 専用(`StrList` のみ `Str`)。例は `samples/stdlib_tour.pvo`・`samples/files.pvo`。
+
 ---
 
 ## 19. ツール: CLI・ソルバ・エディタ
@@ -633,6 +677,7 @@ conflict[refine-conflict]: argument `x` of `sqrt_floor` cannot be proven
 ```sh
 proviso check <file.pvo>   # 静的解析のみ(型・効果・所有権・タイプステート)
 proviso run   <file.pvo>   # 検査してから main を実行(ハードエラーなら実行拒否)
+proviso doc [std.モジュール] # 標準ライブラリの一覧 / モジュールの API とドキュメント
 proviso lsp                # stdio 上の言語サーバ
 ```
 

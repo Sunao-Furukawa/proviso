@@ -1,0 +1,127 @@
+# std.math -- integer arithmetic (the <math.h> / <stdlib.h> integer part of libc).
+#
+# Every function here is pure (no effect row). Where a precondition matters it is a
+# refinement on the parameter, so a call with a provably bad argument is a static
+# `refine-conflict` and an unproven one becomes a runtime contract -- never a crash
+# deep inside the library. (`abs` is a builtin and is not redefined here.)
+
+## The smaller of `a` and `b`.
+fn min(a: Int, b: Int) -> Int {
+  if a <= b { a } else { b }
+}
+
+## The larger of `a` and `b`.
+fn max(a: Int, b: Int) -> Int {
+  if a >= b { a } else { b }
+}
+
+## `x` clamped into the closed range [lo, hi]; `hi` must not be below `lo`.
+fn clamp(x: Int, lo: Int, hi: Int{h | h >= lo}) -> Int {
+  if x < lo { lo } else { if x > hi { hi } else { x } }
+}
+
+## -1, 0 or 1 according to the sign of `x`.
+fn sign(x: Int) -> Int{s | s >= 0 - 1 && s <= 1} {
+  if x > 0 { 1 } else { if x < 0 { 0 - 1 } else { 0 } }
+}
+
+## True when `x` is divisible by 2.
+fn is_even(x: Int) -> Bool {
+  x % 2 == 0
+}
+
+## True when `x` is not divisible by 2.
+fn is_odd(x: Int) -> Bool {
+  x % 2 != 0
+}
+
+## `base` raised to the non-negative power `exp` (exponentiation by squaring).
+fn pow(base: Int, exp: Int{e | e >= 0}) -> Int {
+  if exp == 0 {
+    1
+  } else {
+    let half = pow(base, exp / 2);
+    if exp % 2 == 0 { half * half } else { half * half * base }
+  }
+}
+
+## (`base` ^ `exp`) mod `m`, computed without ever building the huge power.
+fn pow_mod(base: Int, exp: Int{e | e >= 0}, m: Int{k | k > 0}) -> Int {
+  if exp == 0 {
+    1 % m
+  } else {
+    let half = pow_mod(base, exp / 2, m);
+    let sq = (half * half) % m;
+    if exp % 2 == 0 { sq } else { (sq * (base % m)) % m }
+  }
+}
+
+## Greatest common divisor (always >= 0; gcd(0, 0) = 0).
+fn gcd(a: Int, b: Int) -> Int{g | g >= 0} {
+  if b == 0 { abs(a) } else { gcd(b, a % b) }
+}
+
+## Least common multiple (always >= 0; lcm(x, 0) = 0).
+fn lcm(a: Int, b: Int) -> Int{l | l >= 0} {
+  if a == 0 || b == 0 { 0 } else { abs(a / gcd(a, b) * b) }
+}
+
+## n! for n >= 0.
+fn factorial(n: Int{k | k >= 0}) -> Int{f | f >= 1} {
+  if n <= 1 { 1 } else { n * factorial(n - 1) }
+}
+
+## The n-th Fibonacci number (fib(0) = 0, fib(1) = 1), in linear time.
+fn fib(n: Int{k | k >= 0}) -> Int{f | f >= 0} {
+  _math_fib(n, 0, 1)
+}
+
+fn _math_fib(n: Int, a: Int, b: Int) -> Int {
+  if n <= 0 { a } else { _math_fib(n - 1, b, a + b) }
+}
+
+## Integer square root: the largest r with r * r <= n (Newton's method).
+fn isqrt(n: Int{k | k >= 0}) -> Int{r | r >= 0} {
+  if n < 2 { n } else { _math_isqrt(n, n) }
+}
+
+fn _math_isqrt(n: Int, x: Int) -> Int {
+  let y = (x + n / x) / 2;
+  if y >= x { x } else { _math_isqrt(n, y) }
+}
+
+## True when `n` is prime (trial division up to isqrt(n)).
+fn is_prime(n: Int) -> Bool {
+  if n < 2 { false } else { _math_prime(n, 2) }
+}
+
+fn _math_prime(n: Int, d: Int) -> Bool {
+  if d * d > n { true } else { if n % d == 0 { false } else { _math_prime(n, d + 1) } }
+}
+
+## Floor division: rounds toward negative infinity, for a non-zero divisor.
+fn div_floor(a: Int, b: Int{d | d != 0}) -> Int {
+  a / b
+}
+
+## The remainder matching div_floor: the result has the sign of `b`.
+fn mod_floor(a: Int, b: Int{d | d != 0}) -> Int {
+  a % b
+}
+
+## Truncating division (rounds toward zero, like C's `/`), for a non-zero divisor.
+fn div_trunc(a: Int, b: Int{d | d != 0}) -> Int {
+  let q = abs(a) / abs(b);
+  if (a < 0) == (b < 0) { q } else { 0 - q }
+}
+
+## The remainder matching div_trunc (sign of `a`, like C's `%`).
+fn rem_trunc(a: Int, b: Int{d | d != 0}) -> Int {
+  a - div_trunc(a, b) * b
+}
+
+## The number of decimal digits in `n` (the sign is not counted; digits(0) = 1).
+fn digits(n: Int) -> Int{d | d >= 1} {
+  let m = abs(n);
+  if m < 10 { 1 } else { 1 + digits(m / 10) }
+}

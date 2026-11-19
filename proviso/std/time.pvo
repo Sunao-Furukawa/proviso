@@ -1,0 +1,14 @@
+# std.time -- a monotonic clock (<time.h>'s clock_gettime(CLOCK_MONOTONIC)).
+#
+# Reading the clock is the `Clock` effect, so code whose result depends on time says
+# so in its type.
+
+## Milliseconds on a monotonic clock (only differences are meaningful).
+fn clock_ms() -> Int{t | t >= 0} ! {Clock} {
+  __clock_ms()
+}
+
+## Milliseconds elapsed since `start` (a value from clock_ms).
+fn elapsed_ms(start: Int) -> Int ! {Clock} {
+  __clock_ms() - start
+}

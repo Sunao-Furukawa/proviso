@@ -24,7 +24,7 @@ from typing import Dict, List, Optional, Tuple
 from . import nodes as N
 from . import predicate as P
 from . import types as T
-from .diagnostics import Diagnostic, Choice, Warning
+from .diagnostics import Diagnostic, Choice, Warning, source_lines
 from .types import BaseType, FnType, Effect, Refinement
 
 
@@ -58,13 +58,51 @@ def builtin_signatures() -> Dict[str, FnType]:
         "len": FnType([("a", T.ARRAY, False)], T.INT(P.PCmp(">=", 0)), []),
         # Render an Int as a string (for building messages).
         "to_str": FnType([("n", T.INT(), False)], T.STR, []),
+        **intrinsic_signatures(),
+    }
+
+
+def intrinsic_signatures() -> Dict[str, FnType]:
+    """The *intrinsics*: the small primitive layer the standard library (proviso/std)
+    is written on top of -- the analogue of the kernel syscalls glibc wraps. They are
+    `__`-prefixed to mark them as internal: user code should `import std.xxx;` and call
+    the library's refined, documented wrappers instead."""
+    NAT = lambda: T.INT(P.PCmp(">=", 0))
+    I, S, A, B, U = T.INT, T.STR, T.ARRAY, T.BOOL, T.UNIT
+    p = lambda n, t: (n, t, False)
+    eff = lambda *ns: [Effect(n) for n in ns]
+    return {
+        # strings
+        "__str_len": FnType([p("s", S)], NAT(), []),
+        "__str_code": FnType([p("s", S), p("i", I())], I(), []),
+        "__str_sub": FnType([p("s", S), p("i", I()), p("j", I())], S, []),
+        "__str_chr": FnType([p("c", NAT())], S, []),
+        # arrays (persistent: every update returns a fresh array)
+        "__arr_make": FnType([p("n", NAT()), p("v", I())], A, []),
+        "__arr_set": FnType([p("a", A), p("i", I()), p("v", I())], A, []),
+        "__arr_slice": FnType([p("a", A), p("i", I()), p("j", I())], A, []),
+        "__arr_concat": FnType([p("a", A), p("b", A)], A, []),
+        # stdio
+        "__write": FnType([p("s", S)], U, eff("IO")),
+        "__read_line": FnType([], S, eff("IO")),
+        # files
+        "__file_read": FnType([p("path", S)], S, eff("FS")),
+        "__file_write": FnType([p("path", S), p("data", S)], B, eff("FS")),
+        "__file_append": FnType([p("path", S), p("data", S)], B, eff("FS")),
+        "__file_exists": FnType([p("path", S)], B, eff("FS")),
+        "__file_remove": FnType([p("path", S)], B, eff("FS")),
+        # process / environment / time
+        "__exit": FnType([p("code", T.INT(P.PAnd(P.PCmp(">=", 0), P.PCmp("<=", 255))))],
+                         U, eff("Exit")),
+        "__getenv": FnType([p("name", S)], S, eff("Env")),
+        "__clock_ms": FnType([], NAT(), eff("Clock")),
     }
 
 
 class Checker:
     def __init__(self, module: N.Module, source: str):
         self.module = module
-        self.src_lines = source.splitlines()
+        self.src_lines = source_lines(source)
         self.diags: List[Diagnostic] = []
         self.warnings: List[Warning] = []
         self.fns: Dict[str, FnType] = {}

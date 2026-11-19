@@ -1,0 +1,112 @@
+# std.list -- immutable singly linked lists of Int.
+#
+# The cons-list every libc-based program ends up hand-rolling. Built on std.option
+# for the partial operations (head, nth).
+
+import std.option;
+
+## A linked list of Ints.
+enum IntList { Nil(), Cons(Int, IntList) }
+
+## The number of elements.
+fn list_len(xs: IntList) -> Int{n | n >= 0} {
+  match xs { Nil() => 0, Cons(_, rest) => 1 + list_len(rest) }
+}
+
+## True for the empty list.
+fn list_is_empty(xs: IntList) -> Bool {
+  match xs { Nil() => true, Cons(_, _) => false }
+}
+
+## The first element, if any.
+fn list_head(xs: IntList) -> Option {
+  match xs { Nil() => None(), Cons(x, _) => Some(x) }
+}
+
+## Everything after the first element (Nil() for Nil()).
+fn list_tail(xs: IntList) -> IntList {
+  match xs { Nil() => Nil(), Cons(_, rest) => rest }
+}
+
+## The i-th element (0-based), if it exists.
+fn list_nth(xs: IntList, i: Int) -> Option {
+  match xs {
+    Nil() => None(),
+    Cons(x, rest) => if i == 0 { Some(x) } else { if i < 0 { None() } else { list_nth(rest, i - 1) } }
+  }
+}
+
+## The sum of the elements.
+fn list_sum(xs: IntList) -> Int {
+  match xs { Nil() => 0, Cons(x, rest) => x + list_sum(rest) }
+}
+
+## True when some element equals `x`.
+fn list_contains(xs: IntList, x: Int) -> Bool {
+  match xs { Nil() => false, Cons(y, rest) => y == x || list_contains(rest, x) }
+}
+
+## `xs` followed by `ys`.
+fn list_append(xs: IntList, ys: IntList) -> IntList {
+  match xs { Nil() => ys, Cons(x, rest) => Cons(x, list_append(rest, ys)) }
+}
+
+## The elements in reverse order (linear time, accumulator-based).
+fn list_reverse(xs: IntList) -> IntList {
+  _list_rev(xs, Nil())
+}
+
+fn _list_rev(xs: IntList, acc: IntList) -> IntList {
+  match xs { Nil() => acc, Cons(x, rest) => _list_rev(rest, Cons(x, acc)) }
+}
+
+## `f` applied to every element.
+fn list_map(xs: IntList, f: Fn(Int) -> Int ! e) -> IntList ! e {
+  match xs {
+    Nil() => Nil(),
+    Cons(x, rest) => { let y = f(x); Cons(y, list_map(rest, f)) }
+  }
+}
+
+## The elements for which `keep` returns true.
+fn list_filter(xs: IntList, keep: Fn(Int) -> Bool ! e) -> IntList ! e {
+  match xs {
+    Nil() => Nil(),
+    Cons(x, rest) => {
+      let tail = list_filter(rest, keep);
+      if keep(x) { Cons(x, tail) } else { tail }
+    }
+  }
+}
+
+## Left fold.
+fn list_fold(xs: IntList, acc: Int, f: Fn(Int, Int) -> Int ! e) -> Int ! e {
+  match xs { Nil() => acc, Cons(x, rest) => list_fold(rest, f(acc, x), f) }
+}
+
+## The list of an array's elements, in order.
+fn list_from_array(a: Array) -> IntList {
+  _list_from(a, len(a) - 1, Nil())
+}
+
+fn _list_from(a: Array, i: Int, acc: IntList) -> IntList {
+  if i >= 0 && i < len(a) { _list_from(a, i - 1, Cons(a[i], acc)) } else { acc }
+}
+
+## The array of a list's elements, in order.
+fn list_to_array(xs: IntList) -> Array {
+  match xs { Nil() => [], Cons(x, rest) => __arr_concat([x], list_to_array(rest)) }
+}
+
+## A rendering like "[1, 2, 3]".
+fn list_to_str(xs: IntList) -> Str {
+  "[" + _list_show(xs) + "]"
+}
+
+fn _list_show(xs: IntList) -> Str {
+  match xs {
+    Nil() => "",
+    Cons(x, Nil()) => to_str(x),
+    Cons(x, rest) => to_str(x) + ", " + _list_show(rest)
+  }
+}

@@ -30,7 +30,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple
 
 from . import nodes as N
-from .diagnostics import Diagnostic, Choice
+from .diagnostics import Diagnostic, Choice, source_lines
 
 # A binding's tracked state: (protocol, state-or-None, line-it-entered-that-state).
 Cell = Tuple[str, Optional[str], int]
@@ -49,7 +49,7 @@ class _OpSig:
 class TypestateChecker:
     def __init__(self, module: N.Module, source: str):
         self.module = module
-        self.src_lines = source.splitlines()
+        self.src_lines = source_lines(source)
         self.diags: List[Diagnostic] = []
         self.protocols: Dict[str, List[str]] = {
             p.name: list(p.states) for p in getattr(module, "protocols", [])

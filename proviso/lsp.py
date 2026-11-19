@@ -26,6 +26,7 @@ from .checker import Checker
 from .ownership import check_ownership
 from .typestate import check_typestate
 from . import nodes as N
+from .loader import load, LoadError, LINE_STRIDE
 
 # LSP DiagnosticSeverity
 _ERROR = 1
@@ -72,19 +73,52 @@ def _diag_message(d) -> str:
     return "\n".join(parts)
 
 
-def compute_diagnostics(text: str) -> List[dict]:
-    """Analyze source and return LSP Diagnostic dicts (errors + gradual warnings)."""
+def _uri_to_path(uri: str) -> Optional[str]:
+    """`file:///C:/x/y.pvo` -> a filesystem path (None for non-file URIs)."""
+    if not uri.startswith("file:"):
+        return None
+    from urllib.parse import urlparse, unquote
+    from urllib.request import url2pathname
+    return url2pathname(unquote(urlparse(uri).path))
+
+
+def _path_to_uri(path: str) -> str:
+    import pathlib
+    return pathlib.Path(path).resolve().as_uri()
+
+
+def _linked(text: str, path: Optional[str]):
+    """(module, source-for-the-passes, SourceMap) for a document, imports linked in."""
+    module, smap = load(text, path)
+    source = smap if len(smap.segments) > 1 else text
+    return module, source, smap
+
+
+def compute_diagnostics(text: str, path: Optional[str] = None) -> List[dict]:
+    """Analyze source and return LSP Diagnostic dicts (errors + gradual warnings).
+
+    `import`s are resolved relative to `path`. A hard error *inside* an imported
+    module is reported on the importing line (naming the file); gradual points inside
+    the library are the library's business and are not shown."""
     try:
-        module = parse(text)
-    except (ParseError, LexError) as e:
+        module, source, smap = _linked(text, path)
+    except (ParseError, LexError, LoadError) as e:
+        line = e.line if e.line < LINE_STRIDE else 1
         return [{
-            "range": _line_range(text, e.line, getattr(e, "col", None)),
-            "severity": _ERROR, "source": "proviso", "code": "parse",
+            "range": _line_range(text, line, getattr(e, "col", None)),
+            "severity": _ERROR, "source": "proviso",
+            "code": "import" if isinstance(e, LoadError) else "parse",
             "message": e.message,
         }]
-    chk = Checker(module, text)
+    chk = Checker(module, source)
     diags, warns = chk.run()
-    diags = diags + check_ownership(module, text) + check_typestate(module, text)
+    diags = diags + check_ownership(module, source) + check_typestate(module, source)
+    warns = [w for w in warns if smap.is_main(w.line)]
+    for d in diags:
+        if not smap.is_main(d.line):
+            f, loc = smap.locate(d.line)
+            d.title = f"in imported {f}:{loc}: {d.title}"
+            d.line = smap.root_line(d.line)
 
     out: List[dict] = []
     for d in diags:
@@ -105,14 +139,18 @@ def compute_diagnostics(text: str) -> List[dict]:
 # --------------------------------------------------------------------------- #
 # Hover: the signature of the function enclosing the cursor.
 # --------------------------------------------------------------------------- #
-def hover_at(text: str, line0: int, _char0: int) -> Optional[dict]:
+def hover_at(text: str, line0: int, _char0: int,
+             path: Optional[str] = None) -> Optional[dict]:
     """Hover for a 0-based position: the enclosing function's inferred signature."""
     try:
-        module = parse(text)
-    except (ParseError, LexError):
-        return None
+        module, source, smap = _linked(text, path)
+    except (ParseError, LexError, LoadError):
+        try:
+            module, source, smap = parse(text), text, None
+        except (ParseError, LexError):
+            return None
     line1 = line0 + 1
-    decls = sorted(module.decls, key=lambda d: d.line)
+    decls = sorted((d for d in module.decls if d.line < LINE_STRIDE), key=lambda d: d.line)
     enclosing = None
     for d in decls:
         if d.line <= line1:
@@ -121,7 +159,7 @@ def hover_at(text: str, line0: int, _char0: int) -> Optional[dict]:
             break
     if enclosing is None:
         return None
-    chk = Checker(module, text)
+    chk = Checker(module, source)
     chk.run()  # populates inferred effect rows
     ft = chk.fns.get(enclosing.name)
     if ft is None:
@@ -164,6 +202,30 @@ def _name_range(text: str, line1: int, name: str) -> Optional[dict]:
                 "end": {"line": idx, "character": len(src)}}
     return {"start": {"line": idx, "character": col},
             "end": {"line": idx, "character": col + len(name)}}
+
+
+def definition_location(text: str, line0: int, char0: int,
+                        path: Optional[str] = None) -> Optional[tuple]:
+    """Like definition_at, but also follows names into imported files (e.g. a call
+    to `str_split` jumps into std/string.pvo). Returns (path-or-None, range); a None
+    path means "this document"."""
+    rng = definition_at(text, line0, char0)
+    if rng is not None:
+        return None, rng
+    try:
+        toks = tokenize(text)
+        module, _src, smap = _linked(text, path)
+    except (ParseError, LexError, LoadError):
+        return None
+    line1, col1 = line0 + 1, char0 + 1
+    name = next((t.value for t in toks if t.kind == "ident" and t.line == line1
+                 and t.col <= col1 <= t.col + len(t.value)), None)
+    decl_line = _symbols(module).get(name) if name else None
+    if decl_line is None or smap.is_main(decl_line):
+        return None
+    seg = smap.segment(decl_line)
+    seg_text = "\n".join(seg.lines)
+    return seg.path, _name_range(seg_text, decl_line - seg.base, name)
 
 
 def definition_at(text: str, line0: int, char0: int) -> Optional[dict]:
@@ -267,14 +329,18 @@ class LspServer:
             uri = self._uri(msg)
             pos = msg["params"]["position"]
             text = self.docs.get(uri, "")
-            hov = hover_at(text, pos["line"], pos["character"])
+            hov = hover_at(text, pos["line"], pos["character"], _uri_to_path(uri))
             return [self._respond(mid, hov)]
         if method == "textDocument/definition":
             uri = self._uri(msg)
             pos = msg["params"]["position"]
             text = self.docs.get(uri, "")
-            rng = definition_at(text, pos["line"], pos["character"])
-            result = {"uri": uri, "range": rng} if rng is not None else None
+            loc = definition_location(text, pos["line"], pos["character"],
+                                      _uri_to_path(uri))
+            result = None
+            if loc is not None:
+                target, rng = loc
+                result = {"uri": _path_to_uri(target) if target else uri, "range": rng}
             return [self._respond(mid, result)]
         if mid is not None:
             return [self._respond(mid, None)]  # unknown request -> empty result
@@ -282,7 +348,7 @@ class LspServer:
 
     # --- message builders ------------------------------------------------- #
     def _publish(self, uri: str) -> dict:
-        diags = compute_diagnostics(self.docs.get(uri, ""))
+        diags = compute_diagnostics(self.docs.get(uri, ""), _uri_to_path(uri))
         return self._notify("textDocument/publishDiagnostics",
                             {"uri": uri, "diagnostics": diags})
 

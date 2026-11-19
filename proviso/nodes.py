@@ -99,6 +99,16 @@ class Module:
     aliases: List[TypeAlias] = field(default_factory=list)
     enums: List[EnumDecl] = field(default_factory=list)
     protocols: List[ProtocolDecl] = field(default_factory=list)
+    imports: List["ImportDecl"] = field(default_factory=list)
+
+
+@dataclass
+class ImportDecl:
+    """`import std.math;` (a bundled library module) or `import "util.pvo";`
+    (a file relative to the importing one). Resolved and linked by loader.py."""
+    target: str          # "std.math" or a relative path
+    is_path: bool        # True for the quoted-path form
+    line: int = 0
 
 
 # --- Statements ------------------------------------------------------------ #
